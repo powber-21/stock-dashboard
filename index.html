@@ -528,25 +528,39 @@
   }
 
   // ---------- quotes ----------
+  let inFlight = false;
   async function loadQuotes() {
-    if (!book || shared) return;
+    if (!book || shared || inFlight) return;
     if (!apiKey) { quoteState = 'nokey'; render(); return; }
+    inFlight = true;
     quoteState = 'loading'; renderStatus();
     const syms = [...new Set(book.positions.map((p) => p.symbol.toUpperCase()))];
+    const url = QUOTE_API + '?key=' + encodeURIComponent(apiKey) + '&symbols=' + encodeURIComponent(syms.join(','));
     try {
-      const res = await fetch(QUOTE_API + '?key=' + encodeURIComponent(apiKey) + '&symbols=' + encodeURIComponent(syms.join(',')));
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      let data = null;
+      for (let attempt = 0; attempt < 2 && !data; attempt++) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          data = await res.json();
+        } catch (e) {
+          if (attempt === 0) await new Promise((r) => setTimeout(r, 3000)); else throw e;
+        }
+      }
       if (data.error === 'unauthorized') {
         quoteState = 'badkey'; apiKey = ''; store.del(APIKEY_KEY); render();
         askKey('授權碼不正確，請再試一次。');
         return;
       }
-      quotes = { asOf: data.asOf || new Date().toISOString(), quotes: { ...quotes.quotes, ...data.quotes } };
+      const got = {};
+      Object.keys(data.quotes || {}).forEach((s) => { if (data.quotes[s] && data.quotes[s].price != null) got[s] = data.quotes[s]; });
+      quotes = { asOf: data.asOf || new Date().toISOString(), quotes: { ...quotes.quotes, ...got } };
       store.set(QUOTE_KEY, quotes);
       quoteState = 'ok';
     } catch (e) {
       quoteState = 'error';
+    } finally {
+      inFlight = false;
     }
     render();
   }
@@ -569,7 +583,7 @@
     const dot = document.createElement('i'); dot.className = 'dot';
     let text;
     if (quoteState === 'loading') { dot.classList.add('stale'); text = '正在更新股價…'; }
-    else if (quoteState === 'error') { dot.classList.add('err'); text = '報價更新失敗，暫用上次的價格'; }
+    else if (quoteState === 'error') { dot.classList.add('err'); text = '股價更新失敗，暫用上次的價格'; }
     else if (quoteState === 'nokey') { dot.classList.add('stale'); text = '尚未輸入授權碼，暫用上次或 CSV 裡的價格（重新整理頁面可再次輸入）'; }
     else if (quoteState === 'badkey') { dot.classList.add('err'); text = '授權碼不正確，暫用上次或 CSV 裡的價格（重新整理頁面可再次輸入）'; }
     else if (quotes.asOf) {

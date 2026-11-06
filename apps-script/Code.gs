@@ -9,6 +9,7 @@
  */
 
 const CACHE_SECONDS = 300;
+const STALE_SECONDS = 21600;
 const MAX_SYMBOLS = 100;
 const SHEET_NAME = 'quotes';
 
@@ -36,13 +37,29 @@ function doGet(e) {
   });
 
   if (missing.length) {
-    const fresh = fetchQuotes(missing);
-    const toCache = {};
-    Object.keys(fresh).forEach(function (s) {
-      quotes[s] = fresh[s];
-      if (fresh[s].price != null) toCache['q_' + s] = JSON.stringify(fresh[s]);
-    });
-    if (Object.keys(toCache).length) cache.putAll(toCache, CACHE_SECONDS);
+    let fresh = null;
+    try { fresh = fetchQuotes(missing); } catch (err) { fresh = null; }
+    if (fresh) {
+      const toCache = {};
+      Object.keys(fresh).forEach(function (s) {
+        quotes[s] = fresh[s];
+        if (fresh[s].price != null) {
+          toCache['q_' + s] = JSON.stringify(fresh[s]);
+          toCache['s_' + s] = JSON.stringify(fresh[s]);
+        }
+      });
+      // q_ = 新鮮報價（5 分鐘）；s_ = 備用的上一筆報價（6 小時），忙碌或出錯時拿來回傳
+      const fresh5 = {}, stale6h = {};
+      Object.keys(toCache).forEach(function (k) { (k.indexOf('q_') === 0 ? fresh5 : stale6h)[k] = toCache[k]; });
+      if (Object.keys(fresh5).length) cache.putAll(fresh5, CACHE_SECONDS);
+      if (Object.keys(stale6h).length) cache.putAll(stale6h, STALE_SECONDS);
+    } else {
+      const stale = cache.getAll(missing.map(function (s) { return 's_' + s; }));
+      missing.forEach(function (s) {
+        const hit = stale['s_' + s];
+        if (hit) { const q = JSON.parse(hit); q.stale = true; quotes[s] = q; }
+      });
+    }
   }
 
   return json({ asOf: new Date().toISOString(), quotes: quotes });
