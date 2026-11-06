@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>我的股票倉位</title>
+<meta name="description" content="匯入券商持倉 CSV，以即時報價計算市值、今日損益與未實現損益。持倉只存在你的瀏覽器。">
+<meta name="theme-color" content="#10213a">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&display=swap">
+<style>
+  /* Layout: a deep "ledger" band holds the headline numbers and a composition strip of the whole account;
+     below it, three chart cards and the sortable positions table.
+     Colors follow Taiwan market convention: red = up/gain, green = down/loss. */
+  :root {
+    --bg: #eef1f5; --panel: #ffffff; --fg: #0d1726; --muted: #5f6b7d; --line: #dde2ea; --hover: #f3f5f9;
+    --band: #10213a; --band-fg: #f2f5fa; --band-muted: #9fb0c8; --band-line: rgba(255,255,255,.12);
+    --up: #cf3a3a; --down: #138a52; --up-band: #ff8f86; --down-band: #5fd6a0;
+    --eq: #3f6fd8; --etf: #e48a3a; --cash: #aeb7c5; --axis: #98a1b0; --pct: #6a5acd;
+    --s1: #8fb3ff; --s2: #ffc078; --s3: #7ee0b5; --s4: #d4adff; --s5: #ff9fb2; --s0: #5d7090;
+    --shadow: 0 1px 2px rgba(13,23,38,.05), 0 4px 16px rgba(13,23,38,.05);
+    --num: "Fraunces", Georgia, "Noto Serif TC", serif;
+    --display: "Noto Serif TC", "Fraunces", Georgia, serif;
+    --sans: "Noto Sans TC", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0b1018; --panel: #121924; --fg: #e7ecf3; --muted: #8d99ab; --line: #222c3a; --hover: #1a2230;
+            --band: #0e1a2c; --up: #ff6b6b; --down: #34c37f; --eq: #6f9bff; --etf: #f4a259; --cash: #4b5566; --axis: #6b7482; --pct: #a99cff;
+            --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+  .inner { max-width: 1240px; margin-inline: auto;
+           padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h2 { margin: 0; font-size: 1rem; font-weight: 700; letter-spacing: .01em; }
+  .muted { color: var(--muted); }
+  .small { font-size: .8rem; }
+  .up { color: var(--up); } .down { color: var(--down); }
+
+  /* ---------- ledger band ---------- */
+  .band { background: var(--band); color: var(--band-fg); position: relative; overflow: hidden;
+          padding-top: env(safe-area-inset-top, 0px); }
+  .band::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+                  background-image: linear-gradient(var(--band-line) 1px, transparent 1px), linear-gradient(90deg, var(--band-line) 1px, transparent 1px);
+                  background-size: 48px 48px; mask-image: linear-gradient(180deg, rgba(0,0,0,.5), transparent 85%);
+                  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,.5), transparent 85%); }
+  .band .inner { position: relative; padding-block: 22px 26px; display: flex; flex-direction: column; gap: 22px; }
+  .band .up { color: var(--up-band); } .band .down { color: var(--down-band); }
+  .topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .mark { width: 34px; height: 34px; border-radius: 9px; background: rgba(255,255,255,.08); border: 1px solid var(--band-line);
+          display: grid; place-items: center; flex: none; }
+  .brand h1 { margin: 0; font-family: var(--display); font-weight: 600; font-size: 1.35rem; letter-spacing: .04em; }
+  .brand .sub { font-size: .75rem; color: var(--band-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btn { font: inherit; font-size: .85rem; font-weight: 500; border: 1px solid var(--line); background: var(--panel); color: var(--fg);
+         padding: 8px 14px; border-radius: 999px; cursor: pointer; transition: background .15s, border-color .15s, opacity .15s; }
+  .btn:hover { background: var(--hover); }
+  .btn:focus-visible, .sort:focus-visible, .eye:focus-visible { outline: 2px solid var(--eq); outline-offset: 2px; }
+  .btn.primary { background: var(--fg); color: var(--panel); border-color: var(--fg); }
+  .btn.primary:hover { opacity: .88; }
+  .btn.danger { color: var(--up); }
+  .band .btn { background: rgba(255,255,255,.06); color: var(--band-fg); border-color: var(--band-line); }
+  .band .btn:hover { background: rgba(255,255,255,.14); }
+  .band .btn.primary { background: var(--band-fg); color: var(--band); border-color: var(--band-fg); }
+  .band .btn.danger { color: var(--up-band); }
+
+  .hero { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 2fr); gap: 20px 40px; align-items: end; }
+  .hero-main .label, .stat .label { font-size: .78rem; color: var(--band-muted); letter-spacing: .06em; }
+  .hero-main .value { font-family: var(--num); font-size: clamp(2.4rem, 6vw, 3.6rem); line-height: 1.05; font-weight: 400;
+                      font-variant-numeric: tabular-nums lining-nums; letter-spacing: -.01em; margin-top: 4px; }
+  .hero-main .note { font-size: .8rem; color: var(--band-muted); margin-top: 6px; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border-left: 1px solid var(--band-line); }
+  .stat { padding: 2px 0 2px 20px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .stat + .stat { border-left: 1px solid var(--band-line); }
+  .stat .value { font-family: var(--num); font-size: 1.6rem; line-height: 1.2; font-variant-numeric: tabular-nums lining-nums; white-space: nowrap; }
+  .stat .note { font-size: .8rem; color: var(--band-muted); font-variant-numeric: tabular-nums; }
+  .stat .note b { font-weight: 700; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; background: rgba(255,255,255,.08); font-weight: 700; }
+
+  .strip-wrap { display: flex; flex-direction: column; gap: 10px; }
+  .strip { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; background: rgba(255,255,255,.05); }
+  .strip span { height: 100%; min-width: 2px; }
+  .strip-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .78rem; color: var(--band-muted); font-variant-numeric: tabular-nums; }
+  .strip-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .strip-legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+  .strip-legend b { color: var(--band-fg); font-weight: 500; }
+
+  /* ---------- page ---------- */
+  main.inner { padding-block: 18px 48px; display: flex; flex-direction: column; gap: 16px; }
+  .status { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .78rem; color: var(--muted); }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--down); margin-right: 6px; vertical-align: 1px; }
+  .dot.live { box-shadow: 0 0 0 0 color-mix(in srgb, var(--down) 60%, transparent); animation: pulse 2.4s infinite; }
+  .dot.stale { background: var(--etf); } .dot.err { background: var(--up); }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .notice { font-size: .85rem; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); box-shadow: var(--shadow); }
+
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; min-width: 0; box-shadow: var(--shadow); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; }
+  .chart-card { display: flex; flex-direction: column; gap: 6px; }
+  .card-head { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .75rem; color: var(--muted); margin-bottom: 4px; }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+  .chart { position: relative; display: flex; flex-direction: column; gap: 5px; }
+  .row { display: grid; grid-template-columns: 4.2rem minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 2px 4px;
+         font-size: .8rem; font-variant-numeric: tabular-nums; border-radius: 6px; }
+  .row:hover { background: var(--hover); }
+  .sym { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: .02em; }
+  .track { position: relative; height: 12px; }
+  .bar { position: absolute; top: 0; bottom: 0; border-radius: 3px; min-width: 2px; }
+  .zero { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--axis); }
+  .val { text-align: right; white-space: nowrap; min-width: 5.5rem; }
+  .val { font-weight: 600; }
+  .val small { display: inline-block; min-width: 3.4em; margin-left: .5em; text-align: right; font-size: inherit; font-weight: 500; color: var(--pct); }
+  .tip { position: absolute; z-index: 5; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+         border-radius: 10px; box-shadow: 0 10px 28px rgba(0,0,0,.16); padding: 8px 12px; font-size: .78rem;
+         font-variant-numeric: tabular-nums; max-width: 17rem; }
+  .tip-head { color: var(--muted); margin-bottom: 3px; }
+  .tip-line { display: flex; justify-content: space-between; gap: 16px; }
+
+  .table-card { container-type: inline-size; display: flex; flex-direction: column; gap: 6px; }
+  .table-wrap { overflow-x: auto; margin-inline: -8px; }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; font-variant-numeric: tabular-nums; }
+  th, td { padding: 9px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child, .l { text-align: left; }
+  th { font-weight: 500; font-size: .75rem; letter-spacing: .04em; }
+  td:first-child { font-weight: 700; letter-spacing: .02em; }
+  td.name { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: .78rem; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--hover); }
+  .sort { all: unset; cursor: pointer; color: var(--muted); border-radius: 3px; }
+  .sort:hover { color: var(--fg); }
+  th[aria-sort="ascending"] .sort::after { content: " ↑"; }
+  th[aria-sort="descending"] .sort::after { content: " ↓"; }
+  th[aria-sort="ascending"] .sort, th[aria-sort="descending"] .sort { color: var(--fg); }
+  .wt { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .wt i { display: inline-block; height: 6px; border-radius: 3px; }
+  .tag { font-size: .68rem; color: var(--etf); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-left: 6px; }
+  @container (max-width: 720px) { .wide { display: none; } }
+
+  .empty { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 32px; max-width: 640px; }
+  .empty p { margin: 0; line-height: 1.8; }
+  .empty ol { margin: 0; padding-left: 1.3em; line-height: 1.9; }
+
+  .sharebox, .confirm, .share-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .sharebox .small { flex-basis: 100%; }
+  .sharebox input { font: inherit; font-size: .8rem; flex: 1 1 14rem; min-width: 0; padding: 8px 12px; border: 1px solid var(--line);
+                    border-radius: 999px; background: var(--bg); color: var(--muted); }
+  .share-banner { justify-content: space-between; border-color: color-mix(in srgb, var(--eq) 45%, var(--line)); }
+  footer { font-size: .75rem; color: var(--muted); line-height: 1.8; padding-top: 8px; }
+
+  /* ---------- access-code dialog ---------- */
+  dialog.auth { border: 0; padding: 0; border-radius: 20px; width: min(400px, calc(100vw - 32px)); background: var(--panel); color: var(--fg);
+                box-shadow: 0 30px 80px rgba(5,10,20,.35); }
+  dialog.auth::backdrop { background: rgba(8,14,24,.55); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .auth form { display: flex; flex-direction: column; gap: 14px; padding: 28px 26px 22px; }
+  .auth .lock { width: 48px; height: 48px; border-radius: 14px; background: var(--band); display: grid; place-items: center; }
+  .auth h2 { font-family: var(--display); font-size: 1.25rem; font-weight: 600; letter-spacing: .03em; }
+  .auth p { margin: -6px 0 0; color: var(--muted); font-size: .85rem; line-height: 1.7; }
+  .field { position: relative; }
+  .field input { width: 100%; font: inherit; font-size: 1rem; letter-spacing: .08em; padding: 12px 46px 12px 14px; border-radius: 12px;
+                 border: 1.5px solid var(--line); background: var(--bg); color: var(--fg); outline: none; transition: border-color .15s, box-shadow .15s; }
+  .field input:focus { border-color: var(--eq); box-shadow: 0 0 0 4px color-mix(in srgb, var(--eq) 18%, transparent); }
+  .field.bad input { border-color: var(--up); }
+  .eye { all: unset; position: absolute; right: 8px; top: 50%; translate: 0 -50%; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; cursor: pointer; color: var(--muted); }
+  .eye:hover { background: var(--hover); color: var(--fg); }
+  .auth .err { color: var(--up); font-size: .8rem; margin-top: -6px; }
+  .auth .row-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 4px; }
+  .auth .row-btns .btn { padding: 10px 18px; }
+  @media (prefers-reduced-motion: no-preference) {
+    dialog.auth[open] { animation: pop .22s cubic-bezier(.2,.8,.2,1); }
+    .field.shake { animation: shake .35s; }
+    .bar, .strip span { transition: width .45s ease-out, left .45s ease-out; }
+  }
+  @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.97); } }
+  @keyframes shake { 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+
+  @media (max-width: 760px) {
+    .hero { grid-template-columns: 1fr; }
+    .stats { border-left: 0; border-top: 1px solid var(--band-line); padding-top: 14px; }
+    .stat { padding-left: 14px; } .stat:first-child { padding-left: 0; }
+    .stat .value { font-size: 1.25rem; }
+  }
+  @media (max-width: 420px) { .stats { grid-template-columns: 1fr 1fr; row-gap: 14px; } .stat:nth-child(3) { border-left: 0; padding-left: 0; } }
+</style>
+</head>
+<body>
+<header class="band">
+  <div class="inner">
+    <div class="topbar">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 13.5 6.5 9l3 3L16 5.5" stroke="#f2f5fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M11.5 5.5H16V10" stroke="#f2f5fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <div style="min-width:0">
+          <h1>我的股票倉位</h1>
+          <div class="sub" id="account">紅色代表上漲／獲利，綠色代表下跌／虧損</div>
+        </div>
+      </div>
+      <div class="actions">
+        <input type="file" id="file" accept=".csv,text/csv" hidden>
+        <button type="button" class="btn" id="refresh-btn" hidden>更新股價</button>
+        <button type="button" class="btn" id="share-btn" hidden>分享</button>
+        <button type="button" class="btn primary" id="import-btn">匯入券商 CSV</button>
+        <button type="button" class="btn danger" id="clear-btn" hidden>清除資料</button>
+      </div>
+    </div>
+
+    <section class="hero" id="hero" hidden>
+      <div class="hero-main">
+        <div class="label">總市值</div>
+        <div class="value" id="t-mkt">—</div>
+        <div class="note" id="t-cash">—</div>
+      </div>
+      <div class="stats">
+        <div class="stat"><span class="label">今日損益</span><span class="value" id="t-day">—</span><span class="note"><b id="t-daypct" class="pill">—</b></span></div>
+        <div class="stat"><span class="label">未實現損益</span><span class="value" id="t-gain">—</span><span class="note"><b id="t-gainpct" class="pill">—</b></span></div>
+        <div class="stat"><span class="label">投入成本</span><span class="value" id="t-cost">—</span><span class="note">股票與 ETF</span></div>
+      </div>
+    </section>
+
+    <section class="strip-wrap" id="strip-wrap" hidden aria-label="帳戶組成">
+      <div class="strip" id="strip"></div>
+      <div class="strip-legend" id="strip-legend"></div>
+    </section>
+  </div>
+</header>
+
+<main class="inner">
+  <div class="confirm notice" id="confirm" hidden>
+    <span>確定要清除這個瀏覽器裡的持倉資料嗎？</span>
+    <button type="button" class="btn danger" id="confirm-yes">清除</button>
+    <button type="button" class="btn" id="confirm-no">取消</button>
+  </div>
+  <div class="notice" id="msg" hidden></div>
+  <div class="notice share-banner" id="shared-banner" hidden>
+    <span id="shared-text">這是朋友分享的持倉快照。</span>
+    <button type="button" class="btn" id="leave-shared">回到我的持倉</button>
+  </div>
+  <div class="notice sharebox" id="sharebox" hidden>
+    <label for="share-url">分享連結</label>
+    <input id="share-url" type="text" readonly>
+    <button type="button" class="btn primary" id="share-copy">複製</button>
+    <span class="muted small">連結裡包含你的持股、股數、成本和目前價格。朋友打開看到的是現在這一刻的快照，不會跟著更新；要給最新的就再分享一次。資料寫在連結本身，不會上傳到任何伺服器。</span>
+  </div>
+
+  <section class="card empty" id="empty">
+    <h2>匯入持倉後開始使用</h2>
+    <p class="muted">從券商下載持倉 CSV（例如 Schwab 的 Positions 匯出檔），按右上角「匯入券商 CSV」。股價會即時更新，你的股數和成本只存在這個瀏覽器裡，不會上傳。</p>
+    <ol class="muted">
+      <li>股數、成本以匯入的 CSV 為準，持股有變動時重新匯入即可。</li>
+      <li>股價來自 Google Finance，美股約延遲 15–20 分鐘，每 5 分鐘自動更新。</li>
+      <li>換一台裝置需要再匯入一次。</li>
+    </ol>
+    <button type="button" class="btn primary" id="import-btn-2">匯入券商 CSV</button>
+  </section>
+
+  <div id="dash" hidden>
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="status" id="status"></div>
+
+      <section class="grid">
+        <div class="card chart-card">
+          <div class="card-head"><h2>持倉配置</h2><span class="muted small">各持倉市值與佔帳戶比例</span></div>
+          <div class="legend"><span><i style="background:var(--eq)"></i>個股</span><span><i style="background:var(--etf)"></i>ETF</span><span><i style="background:var(--cash)"></i>現金</span></div>
+          <div class="chart" id="c-alloc"></div>
+        </div>
+        <div class="card chart-card">
+          <div class="card-head"><h2>未實現損益</h2><span class="muted small">市值減去成本，依金額排序</span></div>
+          <div class="chart" id="c-gain"></div>
+        </div>
+        <div class="card chart-card">
+          <div class="card-head"><h2>今日漲跌幅</h2><span class="muted small">現價相對前一交易日收盤</span></div>
+          <div class="chart" id="c-day"></div>
+        </div>
+      </section>
+
+      <section class="card table-card">
+        <div class="card-head"><h2>持倉明細</h2><span class="muted small">點欄位名稱可排序；標示「非即時」的價格來自匯入的 CSV</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th data-key="symbol" aria-sort="none"><button type="button" class="sort">代號</button></th>
+              <th data-key="name" class="l wide" aria-sort="none"><button type="button" class="sort">名稱</button></th>
+              <th data-key="qty" class="wide" aria-sort="none"><button type="button" class="sort">股數</button></th>
+              <th data-key="price" aria-sort="none"><button type="button" class="sort">現價</button></th>
+              <th data-key="dayPct" aria-sort="none"><button type="button" class="sort">今日</button></th>
+              <th data-key="mkt" aria-sort="descending"><button type="button" class="sort">市值</button></th>
+              <th data-key="cost" class="wide" aria-sort="none"><button type="button" class="sort">成本</button></th>
+              <th data-key="gain" aria-sort="none"><button type="button" class="sort">損益</button></th>
+              <th data-key="gainPct" aria-sort="none"><button type="button" class="sort">報酬率</button></th>
+              <th data-key="weight" aria-sort="none"><button type="button" class="sort">佔比</button></th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    紅色代表上漲／獲利，綠色代表下跌／虧損。持倉資料只存在你的瀏覽器，不會上傳到任何伺服器；查詢股價時只送出股票代號和授權碼。
+    報價來源 Google Finance，可能延遲，僅供參考，不構成投資建議。
+  </footer>
+</main>
+
+<dialog class="auth" id="auth" aria-labelledby="auth-title">
+  <form id="auth-form" novalidate>
+    <span class="lock" aria-hidden="true">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5" stroke="#f2f5fa" stroke-width="1.8"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" stroke="#f2f5fa" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="15.5" r="1.4" fill="#f2f5fa"/></svg>
+    </span>
+    <h2 id="auth-title">輸入授權碼</h2>
+    <p>授權碼用來取得即時股價，只會存在這台裝置。</p>
+    <div class="field" id="auth-field">
+      <input id="auth-input" type="password" autocomplete="current-password" autocapitalize="off" spellcheck="false" aria-label="授權碼">
+      <button type="button" class="eye" id="auth-eye" aria-label="顯示授權碼">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="1.7"/></svg>
+      </button>
+    </div>
+    <div class="err" id="auth-err" hidden></div>
+    <div class="row-btns">
+      <button type="button" class="btn" id="auth-skip">先略過</button>
+      <button type="submit" class="btn primary">確認</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(() => {
+  const QUOTE_API = 'https://script.google.com/macros/s/AKfycbyhrt2sKDGaQgxU-RXORe8JiJNccZUptjEj2PTirz51qXfA_F3kQtnnLsvEY-LS0_lHUQ/exec';
+  const STORE_KEY = 'pf.positions.v1';
+  const QUOTE_KEY = 'pf.quotes.v1';
+  const APIKEY_KEY = 'pf.apikey.v1';
+  const REFRESH_MS = 5 * 60 * 1000;
+
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } },
+    del(k) { try { localStorage.removeItem(k); } catch {} },
+  };
+
+  // ---------- formatting ----------
+  const nf0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+  const nf2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const nfQty = new Intl.NumberFormat('en-US', { maximumFractionDigits: 4 });
+  const sign = (v) => v > 0 ? '+' : v < 0 ? '−' : '';
+  const usd = (v) => (v < 0 ? '−' : '') + '$' + nf0.format(Math.abs(v));
+  const usd2 = (v) => (v < 0 ? '−' : '') + '$' + nf2.format(Math.abs(v));
+  const susd = (v) => sign(v) + '$' + nf0.format(Math.abs(v));
+  const spct = (f) => sign(f) + nf2.format(Math.abs(f * 100)) + '%';     // f is a fraction
+  const pct1 = (f) => (f * 100).toFixed(1) + '%';
+  const tone = (v) => v > 0 ? 'up' : v < 0 ? 'down' : '';
+  const setText = (el, text, t) => { el.textContent = text; el.classList.remove('up', 'down'); if (t) el.classList.add(t); };
+
+  // ---------- CSV import ----------
+  function parseCSV(text) {
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) {
+        if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += c;
+      } else if (c === '"') q = true;
+      else if (c === ',') { row.push(cell); cell = ''; }
+      else if (c === '\n' || c === '\r') {
+        if (c === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += c;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+  const num = (s) => {
+    if (s == null) return null;
+    const t = String(s).trim();
+    if (!t || /^(--|-|N\/A)$/i.test(t)) return null;
+    const n = Number(t.replace(/[$,%\s]/g, ''));
+    return Number.isFinite(n) ? n : null;
+  };
+
+  function importBrokerCSV(text) {
+    const rows = parseCSV(text.replace(/^﻿/, ''));
+    const hi = rows.findIndex((r) => r.some((c) => c.trim() === 'Symbol'));
+    if (hi < 0) throw new Error('找不到「Symbol」欄位。請確認匯入的是券商的持倉（Positions）CSV。');
+    const h = rows[hi].map((c) => c.trim());
+    const col = (test) => h.findIndex(test);
+    const C = {
+      symbol: col((x) => x === 'Symbol'),
+      name: col((x) => x === 'Description'),
+      qty: col((x) => /^(Qty|Quantity)/i.test(x)),
+      price: col((x) => x === 'Price'),
+      priceChg: col((x) => /^Price Chng \$/i.test(x) || /^Price Change \$/i.test(x)),
+      mkt: col((x) => /^(Mkt Val|Market Value)/i.test(x)),
+      cost: col((x) => /^Cost Basis/i.test(x)),
+      type: col((x) => /^(Asset Type|Security Type)/i.test(x)),
+    };
+    if (C.qty < 0 || C.cost < 0) throw new Error('找不到股數（Qty）或成本（Cost Basis）欄位，無法匯入。');
+    const label = rows.slice(0, hi).map((r) => r.join(' ').trim()).find(Boolean) || '';
+    const positions = []; let cash = 0;
+    rows.slice(hi + 1).forEach((r) => {
+      const sym = (r[C.symbol] || '').trim();
+      if (!sym || /total/i.test(sym)) return;
+      const type = C.type >= 0 ? (r[C.type] || '').trim() : '';
+      if (/^cash/i.test(sym) || /cash|money market/i.test(type)) { cash += num(r[C.mkt]) || 0; return; }
+      const qty = num(r[C.qty]);
+      if (qty == null) return;
+      const price = C.price >= 0 ? num(r[C.price]) : null;
+      const chg = C.priceChg >= 0 ? num(r[C.priceChg]) : null;
+      positions.push({
+        symbol: sym,
+        name: C.name >= 0 ? (r[C.name] || '').trim().replace(/^--$/, '') : '',
+        qty,
+        cost: num(r[C.cost]),
+        type: /etf|fund/i.test(type) ? 'etf' : 'equity',
+        csvPrice: price ?? (num(r[C.mkt]) != null ? num(r[C.mkt]) / qty : null),
+        csvPrev: price != null && chg != null ? price - chg : null,
+      });
+    });
+    if (!positions.length) throw new Error('檔案裡沒有找到任何持股。');
+    return { positions, cash, label, importedAt: new Date().toISOString() };
+  }
+
+  // ---------- shared snapshot (#s=...) ----------
+  const b64e = (str) => {
+    let bin = ''; new TextEncoder().encode(str).forEach((b) => { bin += String.fromCharCode(b); });
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  };
+  const b64d = (s) => {
+    s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '=';
+    return new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
+  };
+  const optNum = (v) => v == null ? null : (Number.isFinite(Number(v)) ? Number(v) : null);
+  function readShared() {
+    const m = location.hash.match(/^#s=([A-Za-z0-9_-]+)$/);
+    if (!m) return null;
+    try {
+      const d = JSON.parse(b64d(m[1]));
+      if (d.v !== 1 || !Array.isArray(d.p)) return null;
+      return {
+        label: '', cash: optNum(d.c) || 0, importedAt: d.t, sharedAt: d.t,
+        positions: d.p.map(([symbol, name, qty, cost, t, price, prev]) => ({
+          symbol: String(symbol), name: String(name || ''), qty: optNum(qty) || 0, cost: optNum(cost),
+          type: t === 'e' ? 'etf' : 'equity', csvPrice: optNum(price), csvPrev: optNum(prev),
+        })),
+      };
+    } catch { return null; }
+  }
+  const shared = readShared();
+
+  function shareLink() {
+    const d = computed();
+    const round = (v, n) => v == null ? null : Number(v.toFixed(n));
+    const payload = {
+      v: 1, t: quotes.asOf || new Date().toISOString(), c: round(book.cash, 2),
+      p: d.list.map((r) => [r.symbol, r.name.slice(0, 40), r.qty, round(r.cost, 2), r.type === 'etf' ? 'e' : 's', round(r.price, 4), round(r.prev, 4)]),
+    };
+    return location.origin + location.pathname + '#s=' + b64e(JSON.stringify(payload));
+  }
+
+  // ---------- state ----------
+  let book = shared || store.get(STORE_KEY);
+  let quotes = shared ? { asOf: shared.sharedAt, quotes: {} } : (store.get(QUOTE_KEY) || { asOf: null, quotes: {} });
+  let apiKey = store.get(APIKEY_KEY) || '';
+  let quoteState = 'idle';           // idle | loading | ok | error | nokey | badkey
+  let sort = { key: 'mkt', dir: 'desc' };
+
+  function computed() {
+    if (!book) return null;
+    const list = book.positions.map((p) => {
+      const q = quotes.quotes[p.symbol.toUpperCase()];
+      const hasQuote = !!(q && q.price != null);
+      const live = shared ? true : hasQuote;   // a shared snapshot carries the sharer's prices
+      const price = hasQuote ? q.price : p.csvPrice;
+      const prev = hasQuote && q.prevClose != null ? q.prevClose : p.csvPrev;
+      const mkt = price != null ? p.qty * price : 0;
+      const day = price != null && prev != null ? p.qty * (price - prev) : 0;
+      const gain = p.cost != null ? mkt - p.cost : null;
+      return {
+        ...p, live, price, prev, mkt, day,
+        dayPct: price != null && prev ? price / prev - 1 : null,
+        gain, gainPct: gain != null && p.cost ? gain / p.cost : null,
+      };
+    });
+    const mkt = list.reduce((s, r) => s + r.mkt, 0) + book.cash;
+    list.forEach((r) => { r.weight = mkt ? r.mkt / mkt : 0; });
+    const day = list.reduce((s, r) => s + r.day, 0);
+    const cost = list.reduce((s, r) => s + (r.cost || 0), 0);
+    const gain = list.reduce((s, r) => s + (r.gain || 0), 0);
+    return { list, mkt, day, dayPct: mkt - day ? day / (mkt - day) : 0, cost, gain, gainPct: cost ? gain / cost : 0, cash: book.cash };
+  }
+
+  // ---------- quotes ----------
+  async function loadQuotes() {
+    if (!book || shared) return;
+    if (!apiKey) { quoteState = 'nokey'; render(); return; }
+    quoteState = 'loading'; renderStatus();
+    const syms = [...new Set(book.positions.map((p) => p.symbol.toUpperCase()))];
+    try {
+      const res = await fetch(QUOTE_API + '?key=' + encodeURIComponent(apiKey) + '&symbols=' + encodeURIComponent(syms.join(',')));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if (data.error === 'unauthorized') {
+        quoteState = 'badkey'; apiKey = ''; store.del(APIKEY_KEY); render();
+        askKey('授權碼不正確，請再試一次。');
+        return;
+      }
+      quotes = { asOf: data.asOf || new Date().toISOString(), quotes: { ...quotes.quotes, ...data.quotes } };
+      store.set(QUOTE_KEY, quotes);
+      quoteState = 'ok';
+    } catch (e) {
+      quoteState = 'error';
+    }
+    render();
+  }
+
+  // ---------- rendering ----------
+  function renderStatus() {
+    const el = $('status');
+    el.replaceChildren();
+    if (!book) return;
+    const fmtTime = (iso) => new Date(iso).toLocaleString('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+    if (shared) {
+      const s = document.createElement('span');
+      const dot = document.createElement('i'); dot.className = 'dot stale';
+      s.append(dot, '快照價格截至 ' + fmtTime(shared.sharedAt) + '，不會自動更新');
+      el.append(s);
+      return;
+    }
+    const s1 = document.createElement('span');
+    const dot = document.createElement('i'); dot.className = 'dot';
+    let text;
+    if (quoteState === 'loading') { dot.classList.add('stale'); text = '正在更新報價…'; }
+    else if (quoteState === 'error') { dot.classList.add('err'); text = '報價更新失敗，暫用上次的價格'; }
+    else if (quoteState === 'nokey') { dot.classList.add('stale'); text = '尚未輸入授權碼，暫用上次或 CSV 裡的價格（重新整理頁面可再次輸入）'; }
+    else if (quoteState === 'badkey') { dot.classList.add('err'); text = '授權碼不正確，暫用上次或 CSV 裡的價格（重新整理頁面可再次輸入）'; }
+    else if (quotes.asOf) {
+      dot.classList.add('live');
+      const t = new Date(quotes.asOf);
+      text = '報價更新於 ' + t.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) + '（Google Finance，約延遲 15–20 分鐘）';
+    } else { dot.classList.add('stale'); text = '尚未取得即時報價'; }
+    s1.append(dot, text);
+    const s2 = document.createElement('span');
+    s2.textContent = '持倉匯入於 ' + fmtTime(book.importedAt);
+    el.append(s1, s2);
+  }
+
+  function tipFor(box) {
+    const t = document.createElement('div'); t.className = 'tip'; t.hidden = true; box.append(t);
+    return {
+      show(e, head, lines) {
+        t.replaceChildren();
+        const h = document.createElement('div'); h.className = 'tip-head'; h.textContent = head; t.append(h);
+        lines.forEach(([k, v, cls]) => {
+          const l = document.createElement('div'); l.className = 'tip-line';
+          const a = document.createElement('span'); a.textContent = k;
+          const b = document.createElement('span'); b.textContent = v; if (cls) b.className = cls;
+          l.append(a, b); t.append(l);
+        });
+        t.hidden = false;
+        const r = box.getBoundingClientRect();
+        t.style.left = Math.max(0, Math.min(r.width - t.offsetWidth, e.clientX - r.left + 12)) + 'px';
+        t.style.top = Math.max(0, Math.min(r.height - t.offsetHeight, e.clientY - r.top + 12)) + 'px';
+      },
+      hide() { t.hidden = true; },
+    };
+  }
+
+  function makeRow(symText, bar, valNodes) {
+    const row = document.createElement('div'); row.className = 'row';
+    const s = document.createElement('span'); s.className = 'sym'; s.textContent = symText;
+    const track = document.createElement('div'); track.className = 'track';
+    track.append(...bar);
+    const v = document.createElement('span'); v.className = 'val';
+    v.append(...valNodes);
+    row.append(s, track, v);
+    return row;
+  }
+
+  // Whole-account composition: top five holdings in their own colors, the rest grouped.
+  function renderStrip(d) {
+    const items = d.list.map((r) => ({ label: r.symbol, v: r.mkt }));
+    if (d.cash) items.push({ label: '現金', v: d.cash, cash: true });
+    items.sort((a, b) => b.v - a.v);
+    const colors = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)'];
+    const top = items.slice(0, 5);
+    const rest = items.slice(5);
+    const restV = rest.reduce((s, x) => s + x.v, 0);
+    const strip = $('strip'); strip.replaceChildren();
+    const legend = $('strip-legend'); legend.replaceChildren();
+    const add = (label, v, color) => {
+      const share = d.mkt ? v / d.mkt : 0;
+      const seg = document.createElement('span');
+      seg.style.width = (share * 100) + '%'; seg.style.background = color;
+      seg.title = label + ' ' + pct1(share);
+      strip.append(seg);
+      const l = document.createElement('span');
+      const i = document.createElement('i'); i.style.background = color;
+      const b = document.createElement('b'); b.textContent = label;
+      l.append(i, b, ' ' + pct1(share));
+      legend.append(l);
+    };
+    top.forEach((x, k) => add(x.label, x.v, colors[k]));
+    if (restV > 0) add('其他 ' + rest.length + ' 項', restV, 'var(--s0)');
+  }
+
+  function renderAlloc(d) {
+    const box = $('c-alloc'); box.replaceChildren();
+    const items = d.list.map((r) => ({ r, v: r.mkt, label: r.symbol, color: r.type === 'etf' ? 'var(--etf)' : 'var(--eq)' }));
+    if (d.cash) items.push({ r: null, v: d.cash, label: '現金', color: 'var(--cash)' });
+    items.sort((a, b) => b.v - a.v);
+    const max = Math.max(...items.map((x) => x.v), 1);
+    const tip = tipFor(box);
+    items.forEach(({ r, v, label, color }) => {
+      const bar = document.createElement('span'); bar.className = 'bar';
+      bar.style.left = '0'; bar.style.width = (v / max * 100) + '%'; bar.style.background = color;
+      const small = document.createElement('small'); small.textContent = pct1(d.mkt ? v / d.mkt : 0);
+      const row = makeRow(label, [bar], [usd(v), small]);
+      row.addEventListener('pointermove', (e) => tip.show(e, r ? r.symbol + ' · ' + r.name : '現金與約當現金', r ? [
+        ['市值', usd2(v)], ['佔帳戶', nf2.format(r.weight * 100) + '%'], ['股數', nfQty.format(r.qty)],
+        ['現價', r.price != null ? usd2(r.price) + (r.live ? '' : '（非即時）') : '—'],
+      ] : [['金額', usd2(v)], ['佔帳戶', nf2.format(d.mkt ? v / d.mkt * 100 : 0) + '%']]));
+      row.addEventListener('pointerleave', () => tip.hide());
+      box.append(row);
+    });
+  }
+
+  function renderDiverge(boxId, d, field, fmt, lines) {
+    const box = $(boxId); box.replaceChildren();
+    const items = d.list.filter((r) => r[field] != null).sort((a, b) => b[field] - a[field]);
+    if (!items.length) { box.textContent = '沒有資料'; return; }
+    const lo = Math.min(0, ...items.map((r) => r[field]));
+    const hi = Math.max(0, ...items.map((r) => r[field]));
+    const x = (v) => hi === lo ? 0 : (v - lo) / (hi - lo) * 100;
+    const tip = tipFor(box);
+    items.forEach((r) => {
+      const v = r[field];
+      const bar = document.createElement('span'); bar.className = 'bar';
+      bar.style.left = Math.min(x(0), x(v)) + '%';
+      bar.style.width = Math.abs(x(v) - x(0)) + '%';
+      bar.style.background = v >= 0 ? 'var(--up)' : 'var(--down)';
+      const zero = document.createElement('span'); zero.className = 'zero';
+      zero.style.left = 'calc(' + x(0) + '% - ' + (x(0) >= 100 ? 1 : 0) + 'px)';
+      const val = document.createElement('span'); val.className = tone(v); val.textContent = fmt(v);
+      const row = makeRow(r.symbol, [bar, zero], [val]);
+      row.addEventListener('pointermove', (e) => tip.show(e, r.symbol + ' · ' + r.name, lines(r)));
+      row.addEventListener('pointerleave', () => tip.hide());
+      box.append(row);
+    });
+  }
+
+  function renderTable(d) {
+    const tb = $('rows'); tb.replaceChildren();
+    const mul = sort.dir === 'asc' ? 1 : -1;
+    const textKey = sort.key === 'symbol' || sort.key === 'name';
+    const list = [...d.list].sort((a, b) => {
+      if (textKey) return mul * String(a[sort.key]).localeCompare(String(b[sort.key]));
+      const x = a[sort.key], y = b[sort.key];
+      if (x == null) return 1; if (y == null) return -1;
+      return mul * (x - y);
+    });
+    const maxW = Math.max(...d.list.map((r) => r.weight), d.mkt ? d.cash / d.mkt : 0, 0.0001);
+    const td = (text, cls, t) => { const c = document.createElement('td'); if (cls) c.className = cls; c.textContent = text; if (t) c.classList.add(t); return c; };
+    const weightCell = (w, color) => {
+      const c = document.createElement('td'); const span = document.createElement('span'); span.className = 'wt';
+      const i = document.createElement('i'); i.style.width = (w / maxW * 3) + 'rem'; i.style.background = color;
+      const s = document.createElement('span'); s.textContent = nf2.format(w * 100) + '%';
+      span.append(i, s); c.append(span); return c;
+    };
+    list.forEach((r) => {
+      const tr = document.createElement('tr');
+      const priceCell = td(r.price != null ? usd2(r.price) : '—');
+      if (!r.live) { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = '非即時'; priceCell.append(tag); }
+      tr.append(
+        td(r.symbol), td(r.name, 'name l wide'), td(nfQty.format(r.qty), 'wide'), priceCell,
+        td(r.dayPct != null ? spct(r.dayPct) : '—', '', tone(r.dayPct)),
+        td(usd(r.mkt)), td(r.cost != null ? usd(r.cost) : '—', 'wide'),
+        td(r.gain != null ? susd(r.gain) : '—', '', tone(r.gain)),
+        td(r.gainPct != null ? spct(r.gainPct) : '—', '', tone(r.gainPct)),
+        weightCell(r.weight, r.type === 'etf' ? 'var(--etf)' : 'var(--eq)'),
+      );
+      tb.append(tr);
+    });
+    if (d.cash) {
+      const tr = document.createElement('tr');
+      tr.append(td('現金'), td('', 'name l wide'), td('', 'wide'), td(''), td(''), td(usd(d.cash)), td('', 'wide'), td(''), td(''),
+        weightCell(d.mkt ? d.cash / d.mkt : 0, 'var(--cash)'));
+      tb.append(tr);
+    }
+  }
+
+  function render() {
+    const has = !!book;
+    $('empty').hidden = has; $('dash').hidden = !has;
+    $('refresh-btn').hidden = !has || !!shared; $('clear-btn').hidden = !has || !!shared;
+    $('share-btn').hidden = !has || !!shared;
+    $('import-btn').hidden = !!shared;
+    $('shared-banner').hidden = !shared;
+    $('hero').hidden = !has; $('strip-wrap').hidden = !has;
+    $('account').textContent = shared ? '朋友分享的持倉快照' : (has && book.label ? book.label : '美股持倉儀表板');
+    renderStatus();
+    if (!has) return;
+    const d = computed();
+    renderStrip(d);
+    setText($('t-mkt'), usd(d.mkt));
+    setText($('t-cash'), '含現金 ' + usd2(d.cash) + '・' + d.list.length + ' 檔持股');
+    setText($('t-day'), susd(d.day), tone(d.day));
+    setText($('t-daypct'), spct(d.dayPct), tone(d.dayPct));
+    setText($('t-gain'), susd(d.gain), tone(d.gain));
+    setText($('t-gainpct'), spct(d.gainPct), tone(d.gainPct));
+    setText($('t-cost'), usd(d.cost));
+    renderAlloc(d);
+    renderDiverge('c-gain', d, 'gain', susd, (r) => [
+      ['未實現損益', susd(r.gain), tone(r.gain)], ['報酬率', spct(r.gainPct), tone(r.gainPct)],
+      ['成本', usd2(r.cost)], ['市值', usd2(r.mkt)],
+    ]);
+    renderDiverge('c-day', d, 'dayPct', spct, (r) => [
+      ['今日漲跌', spct(r.dayPct), tone(r.dayPct)], ['今日損益', susd(r.day), tone(r.day)],
+      ['現價', usd2(r.price) + (r.live ? '' : '（非即時）')], ['前日收盤', r.prev != null ? usd2(r.prev) : '—'],
+    ]);
+    renderTable(d);
+  }
+
+  function showMsg(text) { const m = $('msg'); m.textContent = text; m.hidden = !text; }
+
+  // ---------- events ----------
+  const pick = () => $('file').click();
+  $('import-btn').addEventListener('click', pick);
+  $('import-btn-2').addEventListener('click', pick);
+  $('file').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    try {
+      book = importBrokerCSV(await f.text());
+      if (!store.set(STORE_KEY, book)) showMsg('已匯入，但這個瀏覽器不允許儲存資料，重新整理後需要再匯入一次。');
+      else showMsg('已匯入 ' + book.positions.length + ' 檔持股。');
+      render();
+      loadQuotes();
+    } catch (err) {
+      showMsg('匯入失敗：' + err.message);
+    }
+  });
+  $('refresh-btn').addEventListener('click', loadQuotes);
+  $('clear-btn').addEventListener('click', () => { $('confirm').hidden = false; });
+  $('confirm-no').addEventListener('click', () => { $('confirm').hidden = true; });
+  $('confirm-yes').addEventListener('click', () => {
+    store.del(STORE_KEY); store.del(QUOTE_KEY);
+    book = null; quotes = { asOf: null, quotes: {} };
+    $('confirm').hidden = true; showMsg('已清除這個瀏覽器裡的持倉資料。');
+    render();
+  });
+  document.querySelectorAll('th[data-key]').forEach((th) => {
+    th.querySelector('.sort').addEventListener('click', () => {
+      const k = th.dataset.key;
+      sort = sort.key === k ? { key: k, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: k, dir: (k === 'symbol' || k === 'name') ? 'asc' : 'desc' };
+      document.querySelectorAll('th[data-key]').forEach((h) => h.setAttribute('aria-sort', h.dataset.key === k ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'));
+      render();
+    });
+  });
+
+  $('share-btn').addEventListener('click', () => {
+    const box = $('sharebox');
+    box.hidden = !box.hidden;
+    if (!box.hidden) { $('share-url').value = shareLink(); $('share-url').select(); }
+  });
+  $('share-copy').addEventListener('click', async () => {
+    const input = $('share-url');
+    try { await navigator.clipboard.writeText(input.value); $('share-copy').textContent = '已複製'; }
+    catch { input.select(); $('share-copy').textContent = '請按 Ctrl+C 複製'; }
+    setTimeout(() => { $('share-copy').textContent = '複製'; }, 2000);
+  });
+  $('leave-shared').addEventListener('click', () => { location.href = location.pathname; });
+  window.addEventListener('hashchange', () => location.reload());
+
+  setInterval(() => { if (document.visibilityState === 'visible') loadQuotes(); }, REFRESH_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (!quotes.asOf || Date.now() - new Date(quotes.asOf) > REFRESH_MS)) loadQuotes();
+  });
+
+  // Ask for the access code in a browser dialog (once per page load); no on-page field.
+  // ---------- access-code dialog ----------
+  let asks = 0;
+  const dlg = $('auth');
+  function askKey(message) {
+    if (shared || asks >= 3 || dlg.open) return;
+    asks++;
+    $('auth-err').textContent = message || '';
+    $('auth-err').hidden = !message;
+    $('auth-field').classList.toggle('bad', !!message);
+    $('auth-input').value = '';
+    $('auth-input').type = 'password';
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+    setTimeout(() => $('auth-input').focus(), 30);
+    if (message) { const f = $('auth-field'); f.classList.remove('shake'); void f.offsetWidth; f.classList.add('shake'); }
+  }
+  $('auth-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = $('auth-input').value.trim();
+    if (!v) {
+      const f = $('auth-field'); f.classList.add('bad'); f.classList.remove('shake'); void f.offsetWidth; f.classList.add('shake');
+      $('auth-err').textContent = '請輸入授權碼'; $('auth-err').hidden = false;
+      return;
+    }
+    apiKey = v;
+    store.set(APIKEY_KEY, apiKey);
+    dlg.close();
+    loadQuotes();
+  });
+  const skip = () => { if (dlg.open) dlg.close(); quoteState = 'nokey'; render(); };
+  $('auth-skip').addEventListener('click', skip);
+  dlg.addEventListener('cancel', (e) => { e.preventDefault(); skip(); });
+  $('auth-eye').addEventListener('click', () => {
+    const i = $('auth-input'); const show = i.type === 'password';
+    i.type = show ? 'text' : 'password';
+    $('auth-eye').setAttribute('aria-label', show ? '隱藏授權碼' : '顯示授權碼');
+    i.focus();
+  });
+  $('auth-input').addEventListener('input', () => { $('auth-field').classList.remove('bad'); $('auth-err').hidden = true; });
+
+  render();
+  if (!shared && !apiKey) setTimeout(() => askKey(), 50);
+  else loadQuotes();
+})();
+</script>
+</body>
+</html>
