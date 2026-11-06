@@ -161,11 +161,10 @@
   .empty p { margin: 0; line-height: 1.8; }
   .empty ol { margin: 0; padding-left: 1.3em; line-height: 1.9; }
 
-  .sharebox, .confirm, .share-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .sharebox, .confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .sharebox .small { flex-basis: 100%; }
   .sharebox input { font: inherit; font-size: .8rem; flex: 1 1 14rem; min-width: 0; padding: 8px 12px; border: 1px solid var(--line);
                     border-radius: 999px; background: var(--bg); color: var(--muted); }
-  .share-banner { justify-content: space-between; border-color: color-mix(in srgb, var(--eq) 45%, var(--line)); }
   footer { font-size: .75rem; color: var(--muted); line-height: 1.8; padding-top: 8px; }
   .foot-actions { margin-top: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
   .linkbtn { all: unset; cursor: pointer; color: var(--up); font-size: .75rem; text-decoration: underline; text-underline-offset: 3px; border-radius: 3px; }
@@ -258,10 +257,6 @@
 
 <main class="inner">
   <div class="notice" id="msg" hidden></div>
-  <div class="notice share-banner" id="shared-banner" hidden>
-    <span id="shared-text">這是朋友分享的持倉快照。</span>
-    <button type="button" class="btn" id="leave-shared">回到我的持倉</button>
-  </div>
   <div class="notice sharebox" id="sharebox" hidden>
     <label for="share-url">分享連結</label>
     <input id="share-url" type="text" readonly>
@@ -470,12 +465,9 @@
     return new TextDecoder().decode(Uint8Array.from(atob(s), (c) => c.charCodeAt(0)));
   };
   const optNum = (v) => v == null ? null : (Number.isFinite(Number(v)) ? Number(v) : null);
-  function readShared() {
-    const m = location.hash.match(/^#s=([A-Za-z0-9_-]+)$/);
-    if (!m) return null;
+  function parseSnapshot(d) {
     try {
-      const d = JSON.parse(b64d(m[1]));
-      if (d.v !== 1 || !Array.isArray(d.p)) return null;
+      if (!d || d.v !== 1 || !Array.isArray(d.p)) return null;
       return {
         label: '', cash: optNum(d.c) || 0, importedAt: d.t, sharedAt: d.t, principal: optNum(d.k),
         positions: d.p.map(([symbol, name, qty, cost, t, price, prev]) => ({
@@ -485,21 +477,38 @@
       };
     } catch { return null; }
   }
-  const shared = readShared();
+  // Old long links carry the snapshot in the hash (#s=…); short links carry an id (#v=…) stored by the quote service.
+  const longMatch = location.hash.match(/^#s=([A-Za-z0-9_-]+)$/);
+  let shared = null;
+  if (longMatch) { try { shared = parseSnapshot(JSON.parse(b64d(longMatch[1]))); } catch { shared = null; } }
+  const shareId = (location.hash.match(/^#v=([A-Za-z0-9]{6,24})$/) || [])[1] || null;
+  const viewing = !!(shared || shareId);   // a friend's view of a snapshot
 
-  function shareLink() {
+  function snapshotPayload() {
     const d = computed();
     const round = (v, n) => v == null ? null : Number(v.toFixed(n));
-    const payload = {
+    return {
       v: 1, t: quotes.asOf || new Date().toISOString(), c: round(book.cash, 2), k: PRINCIPAL,
       p: d.list.map((r) => [r.symbol, r.name.slice(0, 40), r.qty, round(r.cost, 2), r.type === 'etf' ? 'e' : 's', round(r.price, 4), round(r.prev, 4)]),
     };
-    return location.origin + location.pathname + '#s=' + b64e(JSON.stringify(payload));
+  }
+  const siteUrl = () => location.origin + location.pathname;
+  // Store the snapshot with the quote service and get a short id back; fall back to the long link.
+  async function shareLink() {
+    const payload = snapshotPayload();
+    if (apiKey) {
+      try {
+        const res = await fetch(QUOTE_API, { method: 'POST', body: JSON.stringify({ key: apiKey, data: payload }) });
+        const out = await res.json();
+        if (out && out.id) return siteUrl() + '#v=' + out.id;
+      } catch {}
+    }
+    return siteUrl() + '#s=' + b64e(JSON.stringify(payload));
   }
 
   // ---------- state ----------
-  let book = shared || store.get(STORE_KEY);
-  let quotes = shared ? { asOf: shared.sharedAt, quotes: {} } : (store.get(QUOTE_KEY) || { asOf: null, quotes: {} });
+  let book = viewing ? shared : store.get(STORE_KEY);
+  let quotes = viewing ? { asOf: shared ? shared.sharedAt : null, quotes: {} } : (store.get(QUOTE_KEY) || { asOf: null, quotes: {} });
   let apiKey = store.get(APIKEY_KEY) || '';
   let quoteState = 'idle';           // idle | loading | ok | error | nokey | badkey
   let sort = { key: 'mkt', dir: 'desc' };
@@ -747,14 +756,13 @@
 
   function render() {
     const has = !!book;
-    $('empty').hidden = has; $('dash').hidden = !has;
-    $('refresh-btn').hidden = !has || !!shared; $('clear-btn').hidden = !has || !!shared;
-    $('share-btn').hidden = !has || !!shared;
-    $('import-btn').hidden = !!shared;
-    $('shared-banner').hidden = !shared;
+    $('empty').hidden = has || viewing; $('dash').hidden = !has;
+    $('refresh-btn').hidden = !has || viewing; $('clear-btn').hidden = !has || viewing;
+    $('share-btn').hidden = !has || viewing;
+    $('import-btn').hidden = viewing;
     $('hero').hidden = !has; $('strip-wrap').hidden = !has;
-    $('account').textContent = shared ? '朋友分享的持倉快照' : '';
-    $('account').hidden = !shared;
+    $('account').textContent = viewing ? '朋友分享的持倉快照' : '';
+    $('account').hidden = !viewing;
     renderStatus();
     if (!has) return;
     const d = computed();
@@ -819,14 +827,23 @@
   // Only if the browser refuses clipboard access does the link box appear, so it can be copied by hand.
   $('share-btn').addEventListener('click', async () => {
     const btn = $('share-btn');
-    const link = shareLink();
+    btn.textContent = '產生連結中…';
+    const linkPromise = shareLink();
+    let link = '';
     try {
-      await navigator.clipboard.writeText(link);
+      if (window.ClipboardItem && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': linkPromise.then((l) => { link = l; return new Blob([l], { type: 'text/plain' }); }) })]);
+      } else {
+        link = await linkPromise;
+        await navigator.clipboard.writeText(link);
+      }
       $('sharebox').hidden = true;
       btn.textContent = '已複製連結';
       clearTimeout(btn._t);
       btn._t = setTimeout(() => { btn.textContent = '分享'; }, 1800);
     } catch {
+      btn.textContent = '分享';
+      link = link || await linkPromise;
       $('share-url').value = link;
       $('sharebox').hidden = false;
       $('share-url').select();
@@ -838,7 +855,6 @@
     catch { input.select(); $('share-copy').textContent = '請按 Ctrl+C 複製'; }
     setTimeout(() => { $('share-copy').textContent = '複製'; }, 2000);
   });
-  $('leave-shared').addEventListener('click', () => { location.href = location.pathname; });
   window.addEventListener('hashchange', () => location.reload());
 
   setInterval(() => { if (document.visibilityState === 'visible') loadQuotes(); }, REFRESH_MS);
@@ -886,8 +902,26 @@
   });
   $('auth-input').addEventListener('input', () => { $('auth-field').classList.remove('bad'); $('auth-err').hidden = true; });
 
+  async function openShortLink() {
+    showMsg('正在載入分享內容…');
+    try {
+      const res = await fetch(QUOTE_API + '?share=' + encodeURIComponent(shareId));
+      const out = await res.json();
+      shared = parseSnapshot(out && out.data);
+    } catch { shared = null; }
+    if (shared) {
+      book = shared;
+      quotes = { asOf: shared.sharedAt, quotes: {} };
+      showMsg('');
+    } else {
+      showMsg('這個分享連結已失效或不存在。');
+    }
+    render();
+  }
+
   render();
-  if (!shared && !apiKey) setTimeout(() => askKey(), 50);
+  if (shareId) openShortLink();
+  else if (!viewing && !apiKey) setTimeout(() => askKey(), 50);
   else loadQuotes();
 })();
 </script>

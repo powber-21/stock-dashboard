@@ -13,7 +13,44 @@ const STALE_SECONDS = 21600;
 const MAX_SYMBOLS = 100;
 const SHEET_NAME = 'quotes';
 
+// ---------- 分享短連結 ----------
+// 存：POST {key, data}（需要授權碼）→ {id}
+// 讀：GET ?share=<id>（不需要授權碼，朋友打開連結時用）→ {data}
+const SHARE_SHEET = 'shares';
+const SHARE_MAX_CHARS = 30000;
+
+function doPost(e) {
+  let body = {};
+  try { body = JSON.parse((e && e.postData && e.postData.contents) || '{}'); } catch (err) { return json({ error: 'bad_request' }); }
+  const apiKey = PropertiesService.getScriptProperties().getProperty('API_KEY');
+  if (!apiKey || String(body.key || '') !== apiKey) return json({ error: 'unauthorized' });
+  const text = JSON.stringify(body.data || null);
+  if (!body.data || text.length > SHARE_MAX_CHARS) return json({ error: 'bad_request' });
+
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(SHARE_SHEET) || ss.insertSheet(SHARE_SHEET);
+  const id = Utilities.getUuid().replace(/-/g, '').slice(0, 10);
+  sh.appendRow([id, text, new Date()]);
+  return json({ id: id });
+}
+
+function readShare(id) {
+  if (!/^[A-Za-z0-9]{6,24}$/.test(id)) return json({ error: 'not_found' });
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('share_' + id);
+  if (hit) return json({ data: JSON.parse(hit) });
+  const sh = SpreadsheetApp.getActive().getSheetByName(SHARE_SHEET);
+  if (!sh || sh.getLastRow() < 1) return json({ error: 'not_found' });
+  const found = sh.getRange(1, 1, sh.getLastRow(), 1).createTextFinder(id).matchEntireCell(true).findNext();
+  if (!found) return json({ error: 'not_found' });
+  const text = sh.getRange(found.getRow(), 2).getValue();
+  if (String(text).length < 90000) cache.put('share_' + id, String(text), 21600);
+  return json({ data: JSON.parse(text) });
+}
+
 function doGet(e) {
+  if (e && e.parameter && e.parameter.share) return readShare(String(e.parameter.share));
+
   // 只有帶正確授權碼的請求才回應。授權碼設在「專案設定 → 指令碼屬性」的 API_KEY。
   const apiKey = PropertiesService.getScriptProperties().getProperty('API_KEY');
   const given = String((e && e.parameter && e.parameter.key) || '');
