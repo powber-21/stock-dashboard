@@ -205,6 +205,11 @@ function toGoogleSymbol(s) {
   return s.replace('/', '.');
 }
 
+// 在編輯器裡按「執行」：第一次會要求「連接到外部服務」的授權，允許後走勢圖才抓得到歷史股價
+function testHistory() {
+  Logger.log(readHistory(['SPY', 'AAPL'], '2026-06-01').getContent().slice(0, 300));
+}
+
 // 在編輯器裡按「執行」測試用
 function testQuotes() {
   Logger.log(JSON.stringify(fetchQuotes(['AAPL', 'BRK/B', 'IVV', 'SPCX'])));
