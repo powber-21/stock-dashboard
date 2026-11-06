@@ -121,7 +121,22 @@
   .tip-head { color: var(--muted); margin-bottom: 3px; }
   .tip-line { display: flex; justify-content: space-between; gap: 16px; }
 
-  .table-card { container-type: inline-size; display: flex; flex-direction: column; gap: 6px; }
+  .table-card { container-type: inline-size; display: block; }
+  .table-card > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+                          margin: -20px; padding: 20px; border-radius: var(--radius); }
+  .table-card > summary::-webkit-details-marker { display: none; }
+  .table-card > summary:hover .chev { color: var(--fg); }
+  .table-card > summary:focus-visible { outline: 2px solid var(--eq); outline-offset: -2px; }
+  .table-card > summary .card-head { margin: 0; }
+  .table-card[open] > summary { margin-bottom: -8px; }
+  .chev { display: inline-flex; align-items: center; gap: 8px; flex: none; font-size: .8rem; font-weight: 500; color: var(--muted);
+          padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; transition: color .15s; }
+  .chev::after { content: ""; width: 7px; height: 7px; border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
+                 transform: translateY(-2px) rotate(45deg); transition: transform .2s; }
+  .table-card[open] .chev::after { transform: translateY(2px) rotate(-135deg); }
+  .table-card .when-open, .table-card[open] .when-closed { display: none; }
+  .table-card[open] .when-open { display: inline; }
+  .table-card .table-wrap { margin-top: 12px; }
   .table-wrap { overflow-x: auto; margin-inline: -8px; }
   table { width: 100%; border-collapse: collapse; font-size: .82rem; font-variant-numeric: tabular-nums; }
   th, td { padding: 9px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
@@ -140,6 +155,7 @@
   .wt i { display: inline-block; height: 6px; border-radius: 3px; }
   .tag { font-size: .68rem; color: var(--etf); border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-left: 6px; }
   @container (max-width: 720px) { .wide { display: none; } }
+  @container (max-width: 480px) { .mid { display: none; } th, td { padding-inline: 5px; } }
 
   .empty { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; padding: 32px; max-width: 640px; }
   .empty p { margin: 0; line-height: 1.8; }
@@ -151,6 +167,9 @@
                     border-radius: 999px; background: var(--bg); color: var(--muted); }
   .share-banner { justify-content: space-between; border-color: color-mix(in srgb, var(--eq) 45%, var(--line)); }
   footer { font-size: .75rem; color: var(--muted); line-height: 1.8; padding-top: 8px; }
+  .foot-actions { margin-top: 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+  .linkbtn { all: unset; cursor: pointer; color: var(--up); font-size: .75rem; text-decoration: underline; text-underline-offset: 3px; border-radius: 3px; }
+  .linkbtn:focus-visible { outline: 2px solid var(--eq); outline-offset: 2px; }
 
   /* ---------- access-code dialog ---------- */
   dialog.auth { border: 0; padding: 0; border-radius: 20px; width: min(400px, calc(100vw - 32px)); background: var(--panel); color: var(--fg);
@@ -184,7 +203,16 @@
     .stat { padding-left: 14px; } .stat:first-child { padding-left: 0; }
     .stat .value { font-size: 1.25rem; }
   }
-  @media (max-width: 420px) { .stats { grid-template-columns: 1fr 1fr; row-gap: 14px; } .stat:nth-child(3) { border-left: 0; padding-left: 0; } }
+  @media (max-width: 480px) {
+    .band .inner { gap: 18px; }
+    .actions { gap: 6px; }
+    .actions .btn { padding: 7px 12px; font-size: .8rem; }
+    .stat { padding-left: 10px; } .stat:first-child { padding-left: 0; }
+    .stat .label { font-size: .7rem; letter-spacing: .02em; }
+    .stat .value { font-size: 1.05rem; }
+    .stat .note { font-size: .72rem; }
+    .pill { padding: 0 6px; }
+  }
 </style>
 </head>
 <body>
@@ -197,7 +225,7 @@
         </span>
         <div style="min-width:0">
           <h1>我的股票倉位</h1>
-          <div class="sub" id="account">紅色代表上漲／獲利，綠色代表下跌／虧損</div>
+          <div class="sub" id="account" hidden></div>
         </div>
       </div>
       <div class="actions">
@@ -205,7 +233,6 @@
         <button type="button" class="btn" id="refresh-btn" hidden>更新股價</button>
         <button type="button" class="btn" id="share-btn" hidden>分享</button>
         <button type="button" class="btn primary" id="import-btn">匯入券商 CSV</button>
-        <button type="button" class="btn danger" id="clear-btn" hidden>清除資料</button>
       </div>
     </div>
 
@@ -230,11 +257,6 @@
 </header>
 
 <main class="inner">
-  <div class="confirm notice" id="confirm" hidden>
-    <span>確定要清除這個瀏覽器裡的持倉資料嗎？</span>
-    <button type="button" class="btn danger" id="confirm-yes">清除</button>
-    <button type="button" class="btn" id="confirm-no">取消</button>
-  </div>
   <div class="notice" id="msg" hidden></div>
   <div class="notice share-banner" id="shared-banner" hidden>
     <span id="shared-text">這是朋友分享的持倉快照。</span>
@@ -278,32 +300,44 @@
         </div>
       </section>
 
-      <section class="card table-card">
-        <div class="card-head"><h2>持倉明細</h2><span class="muted small">點欄位名稱可排序；標示「非即時」的價格來自匯入的 CSV</span></div>
+      <details class="card table-card" id="positions">
+        <summary>
+          <span class="card-head"><h2>持倉明細</h2><span class="muted small">每檔股數、成本與損益；點欄位名稱可排序</span></span>
+          <span class="chev"><span class="when-closed">展開</span><span class="when-open">收起</span></span>
+        </summary>
         <div class="table-wrap">
           <table>
             <thead><tr>
               <th data-key="symbol" aria-sort="none"><button type="button" class="sort">代號</button></th>
               <th data-key="name" class="l wide" aria-sort="none"><button type="button" class="sort">名稱</button></th>
               <th data-key="qty" class="wide" aria-sort="none"><button type="button" class="sort">股數</button></th>
-              <th data-key="price" aria-sort="none"><button type="button" class="sort">現價</button></th>
+              <th data-key="price" class="mid" aria-sort="none"><button type="button" class="sort">現價</button></th>
               <th data-key="dayPct" aria-sort="none"><button type="button" class="sort">今日</button></th>
               <th data-key="mkt" aria-sort="descending"><button type="button" class="sort">市值</button></th>
               <th data-key="cost" class="wide" aria-sort="none"><button type="button" class="sort">成本</button></th>
               <th data-key="gain" aria-sort="none"><button type="button" class="sort">損益</button></th>
               <th data-key="gainPct" aria-sort="none"><button type="button" class="sort">報酬率</button></th>
-              <th data-key="weight" aria-sort="none"><button type="button" class="sort">佔比</button></th>
+              <th data-key="weight" class="mid" aria-sort="none"><button type="button" class="sort">佔比</button></th>
             </tr></thead>
             <tbody id="rows"></tbody>
           </table>
         </div>
-      </section>
+      </details>
     </div>
   </div>
 
   <footer>
     紅色代表上漲／獲利，綠色代表下跌／虧損。持倉資料只存在你的瀏覽器，不會上傳到任何伺服器；查詢股價時只送出股票代號和授權碼。
     報價來源 Google Finance，可能延遲，僅供參考，不構成投資建議。
+    <div class="foot-actions">
+      <span id="imported"></span>
+      <button type="button" class="linkbtn" id="clear-btn" hidden>清除這個瀏覽器的持倉資料</button>
+      <div class="confirm notice" id="confirm" hidden>
+        <span>確定要清除這個瀏覽器裡的持倉資料嗎？</span>
+        <button type="button" class="btn danger" id="confirm-yes">清除</button>
+        <button type="button" class="btn" id="confirm-no">取消</button>
+      </div>
+    </div>
   </footer>
 </main>
 
@@ -521,6 +555,7 @@
   function renderStatus() {
     const el = $('status');
     el.replaceChildren();
+    $('imported').textContent = '';
     if (!book) return;
     const fmtTime = (iso) => new Date(iso).toLocaleString('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
     if (shared) {
@@ -533,19 +568,18 @@
     const s1 = document.createElement('span');
     const dot = document.createElement('i'); dot.className = 'dot';
     let text;
-    if (quoteState === 'loading') { dot.classList.add('stale'); text = '正在更新報價…'; }
+    if (quoteState === 'loading') { dot.classList.add('stale'); text = '正在更新股價…'; }
     else if (quoteState === 'error') { dot.classList.add('err'); text = '報價更新失敗，暫用上次的價格'; }
     else if (quoteState === 'nokey') { dot.classList.add('stale'); text = '尚未輸入授權碼，暫用上次或 CSV 裡的價格（重新整理頁面可再次輸入）'; }
     else if (quoteState === 'badkey') { dot.classList.add('err'); text = '授權碼不正確，暫用上次或 CSV 裡的價格（重新整理頁面可再次輸入）'; }
     else if (quotes.asOf) {
       dot.classList.add('live');
       const t = new Date(quotes.asOf);
-      text = '報價更新於 ' + t.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) + '（Google Finance，約延遲 15–20 分鐘）';
+      text = '股價更新於 ' + t.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) + '（Google Finance）';
     } else { dot.classList.add('stale'); text = '尚未取得即時報價'; }
     s1.append(dot, text);
-    const s2 = document.createElement('span');
-    s2.textContent = '持倉匯入於 ' + fmtTime(book.importedAt);
-    el.append(s1, s2);
+    el.append(s1);
+    $('imported').textContent = '持倉匯入於 ' + fmtTime(book.importedAt);
   }
 
   function tipFor(box) {
@@ -665,14 +699,14 @@
     const maxW = Math.max(...d.list.map((r) => r.weight), d.mkt ? d.cash / d.mkt : 0, 0.0001);
     const td = (text, cls, t) => { const c = document.createElement('td'); if (cls) c.className = cls; c.textContent = text; if (t) c.classList.add(t); return c; };
     const weightCell = (w, color) => {
-      const c = document.createElement('td'); const span = document.createElement('span'); span.className = 'wt';
+      const c = document.createElement('td'); c.className = 'mid'; const span = document.createElement('span'); span.className = 'wt';
       const i = document.createElement('i'); i.style.width = (w / maxW * 3) + 'rem'; i.style.background = color;
       const s = document.createElement('span'); s.textContent = nf2.format(w * 100) + '%';
       span.append(i, s); c.append(span); return c;
     };
     list.forEach((r) => {
       const tr = document.createElement('tr');
-      const priceCell = td(r.price != null ? usd2(r.price) : '—');
+      const priceCell = td(r.price != null ? usd2(r.price) : '—', 'mid');
       if (!r.live) { const tag = document.createElement('span'); tag.className = 'tag'; tag.textContent = '非即時'; priceCell.append(tag); }
       tr.append(
         td(r.symbol), td(r.name, 'name l wide'), td(nfQty.format(r.qty), 'wide'), priceCell,
@@ -686,7 +720,7 @@
     });
     if (d.cash) {
       const tr = document.createElement('tr');
-      tr.append(td('現金'), td('', 'name l wide'), td('', 'wide'), td(''), td(''), td(usd(d.cash)), td('', 'wide'), td(''), td(''),
+      tr.append(td('現金'), td('', 'name l wide'), td('', 'wide'), td('', 'mid'), td(''), td(usd(d.cash)), td('', 'wide'), td(''), td(''),
         weightCell(d.mkt ? d.cash / d.mkt : 0, 'var(--cash)'));
       tb.append(tr);
     }
@@ -700,13 +734,14 @@
     $('import-btn').hidden = !!shared;
     $('shared-banner').hidden = !shared;
     $('hero').hidden = !has; $('strip-wrap').hidden = !has;
-    $('account').textContent = shared ? '朋友分享的持倉快照' : (has && book.label ? book.label : '美股持倉儀表板');
+    $('account').textContent = shared ? '朋友分享的持倉快照' : '';
+    $('account').hidden = !shared;
     renderStatus();
     if (!has) return;
     const d = computed();
     renderStrip(d);
     setText($('t-mkt'), usd(d.mkt));
-    setText($('t-cash'), '含現金 ' + usd2(d.cash) + '・' + d.list.length + ' 檔持股');
+    setText($('t-cash'), d.list.length + ' 檔持股');
     setText($('t-day'), susd(d.day), tone(d.day));
     setText($('t-daypct'), spct(d.dayPct), tone(d.dayPct));
     setText($('t-gain'), susd(d.gain), tone(d.gain));
