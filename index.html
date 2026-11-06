@@ -137,11 +137,11 @@
   .vc-stats > div { display: flex; flex-direction: column; gap: 2px; }
   .vc-stats .label { font-size: .75rem; color: var(--muted); }
   .vc-stats .v { font-family: var(--num); font-size: 1.35rem; font-variant-numeric: tabular-nums lining-nums; }
-  .vc-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .75rem; color: var(--muted); margin-bottom: -6px; }
+  .vc-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .78rem; color: var(--muted); margin-bottom: -6px; }
   .vc-legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .vc-legend .ln { display: inline-block; width: 16px; height: 0; border-top: 2px solid; border-radius: 2px; }
-  .vc-legend .ln.me { border-color: var(--eq); }
-  .vc-legend .ln.spy { border-color: var(--spy); }
+  .vc-legend .ln { display: inline-block; width: 18px; height: 4px; border-radius: 999px; }
+  .vc-legend .ln.me { background: var(--eq); }
+  .vc-legend .ln.spy { background: var(--spy); }
   .vchart { position: relative; min-height: 200px; }
   .vchart svg { display: block; width: 100%; overflow: visible; }
   .vchart .tick text { fill: var(--muted); font-size: 11px; font-family: var(--sans); }
@@ -323,7 +323,7 @@
           <div><span class="label" id="vc-label">區間變動</span><span class="v" id="vc-change">—</span></div>
           <div><span class="label">同期 S&amp;P 500</span><span class="v" id="vc-spy">—</span></div>
         </div>
-        <div class="vc-legend"><span><i class="ln me"></i>我的總價值</span><span><i class="ln spy"></i>S&amp;P 500（SPY，以相同起點換算）</span></div>
+        <div class="vc-legend"><span><i class="ln me"></i>我的總價值</span><span><i class="ln spy"></i>S&amp;P 500（SPY）</span></div>
         <div class="vchart" id="vchart"></div>
       </section>
 
@@ -684,8 +684,7 @@
     if (i0 > 0 && range !== 'ytd') i0 -= 1;
     const pts = i0 >= 0 ? all.slice(i0) : [];
     const labels = { '1w': '近 1 週變動', '1m': '近 1 個月變動', '3m': '近 3 個月變動', ytd: '年度至今變動', '1y': '近 1 年變動', '2y': '近 2 年變動', '5y': '近 5 年變動' };
-    const clamped = pts.length && range !== 'ytd' && startIso === all[0].date && i0 === 0;
-    $('vc-label').textContent = clamped ? labels[range] + '（' + Number(all[0].date.slice(5, 7)) + '/' + Number(all[0].date.slice(8)) + ' 起）' : labels[range];
+    $('vc-label').textContent = labels[range];
     if (pts.length < 2) {
       setText($('vc-end'), '—'); setText($('vc-change'), '—'); setText($('vc-spy'), '—');
       const e = document.createElement('div'); e.className = 'vc-empty';
@@ -743,12 +742,9 @@
       el('text', { x, y: H - 6, 'text-anchor': 'middle' }, xt).textContent = days > 45 ? (d.getMonth() + 1) + '月' : (d.getMonth() + 1) + '/' + d.getDate();
     });
 
-    // area + line
+    // lines
     const color = getComputedStyle(document.documentElement).getPropertyValue('--eq').trim() || '#3f6fd8';
-    const grad = el('linearGradient', { id: 'vc-fill', x1: 0, x2: 0, y1: 0, y2: 1 }, el('defs', {}));
-    [[0, .22], [.6, .07], [1, 0]].forEach(([o, a]) => el('stop', { offset: o, 'stop-color': color, 'stop-opacity': a }, grad));
     const line = pts.map((p, k) => (k ? 'L' : 'M') + X(xs[k]).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join('');
-    el('path', { d: line + 'L' + X(xs[xs.length - 1]).toFixed(1) + ' ' + (H - m.b) + 'L' + X(xs[0]).toFixed(1) + ' ' + (H - m.b) + 'Z', fill: 'url(#vc-fill)' });
     const spyColor = getComputedStyle(document.documentElement).getPropertyValue('--spy').trim() || '#8b5a2b';
     let spyPath = '', pen = false;
     bench.forEach((v, k) => { if (v == null) { pen = false; return; } spyPath += (pen ? 'L' : 'M') + X(xs[k]).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; });
@@ -942,7 +938,9 @@
     items.forEach((r) => {
       const v = r[field];
       const bar = document.createElement('span'); bar.className = 'bar';
-      bar.style.left = Math.min(x(0), x(v)) + '%';
+      // Anchor each bar on the zero line, so even a tiny value grows in its own direction.
+      if (v >= 0) bar.style.left = x(0) + '%';
+      else bar.style.right = (100 - x(0)) + '%';
       bar.style.width = Math.abs(x(v) - x(0)) + '%';
       bar.style.background = v >= 0 ? 'var(--up)' : 'var(--down)';
       const zero = document.createElement('span'); zero.className = 'zero';
