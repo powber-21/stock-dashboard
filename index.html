@@ -48,7 +48,9 @@
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
+  /* The root is navy so the iOS status-bar fade matches the header; the content area paints its own light ground. */
+  html { background: var(--band); }
+  body { margin: 0; background: var(--band); color: var(--fg); font: 14px/1.55 var(--sans); -webkit-font-smoothing: antialiased; }
   .inner { max-width: 1240px; margin-inline: auto;
            padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
   h2 { margin: 0; font-size: 1rem; font-weight: 700; letter-spacing: .01em; }
@@ -106,6 +108,7 @@
   .strip-legend b { color: var(--band-fg); font-weight: 500; }
 
   /* ---------- page ---------- */
+  .page { background: var(--bg); min-height: 100vh; padding-bottom: env(safe-area-inset-bottom, 0px); }
   main.inner { padding-block: 18px 48px; display: flex; flex-direction: column; gap: 16px; }
   .status { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .78rem; color: var(--muted); }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--down); margin-right: 6px; vertical-align: 1px; }
@@ -294,6 +297,7 @@
   </div>
 </header>
 
+<div class="page">
 <main class="inner">
   <div class="notice" id="msg" hidden></div>
   <div class="notice sharebox" id="sharebox" hidden>
@@ -396,6 +400,7 @@
     </div>
   </footer>
 </main>
+</div>
 
 <dialog class="auth" id="auth" aria-labelledby="auth-title">
   <form id="auth-form" novalidate>
