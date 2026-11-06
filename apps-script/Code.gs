@@ -56,12 +56,12 @@ function doGet(e) {
   const given = String((e && e.parameter && e.parameter.key) || '');
   if (!apiKey || given !== apiKey) return json({ error: 'unauthorized' });
 
-  const raw = String((e && e.parameter && e.parameter.symbols) || '').toUpperCase();
-  // 只允許代號常見字元，防止被塞入公式
-  const symbols = Array.from(new Set(
-    raw.split(',').map(function (s) { return s.trim(); })
-       .filter(function (s) { return /^[A-Z0-9.\-\/:]{1,20}$/.test(s); })
-  )).slice(0, MAX_SYMBOLS);
+  if (e.parameter.history) {
+    const from = /^\d{4}-\d{2}-\d{2}$/.test(String(e.parameter.from || '')) ? String(e.parameter.from) : '2026-06-01';
+    return readHistory(parseSymbols(e.parameter.history), from);
+  }
+
+  const symbols = parseSymbols(e.parameter.symbols);
 
   const cache = CacheService.getScriptCache();
   const quotes = {};
@@ -100,6 +100,60 @@ function doGet(e) {
   }
 
   return json({ asOf: new Date().toISOString(), quotes: quotes });
+}
+
+// 只允許代號常見字元，防止被塞入公式
+function parseSymbols(raw) {
+  return Array.from(new Set(
+    String(raw || '').toUpperCase().split(',').map(function (s) { return s.trim(); })
+       .filter(function (s) { return /^[A-Z0-9.\-\/:]{1,20}$/.test(s); })
+  )).slice(0, MAX_SYMBOLS);
+}
+
+// ---------- 歷史收盤價（總價值走勢圖用） ----------
+// GOOGLEFINANCE 的歷史資料無法從 Apps Script 讀取，所以改向 Yahoo Finance 取每日收盤價，快取 3 小時。
+// 回傳 {history: {AAPL: [["2026-06-01", 201.5], ...], ...}}
+function readHistory(symbols, from) {
+  const cache = CacheService.getScriptCache();
+  const start = Math.floor(new Date(from + 'T00:00:00Z').getTime() / 1000);
+  const now = Math.floor(Date.now() / 1000);
+  const out = {};
+  const need = [];
+  symbols.forEach(function (s) {
+    const hit = cache.get('h_' + from + '_' + s);
+    if (hit) out[s] = JSON.parse(hit); else need.push(s);
+  });
+  if (need.length) {
+    const reqs = need.map(function (s) {
+      return {
+        url: 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(toYahooSymbol(s)) +
+             '?period1=' + start + '&period2=' + now + '&interval=1d',
+        muteHttpExceptions: true,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      };
+    });
+    const res = UrlFetchApp.fetchAll(reqs);
+    res.forEach(function (r, i) {
+      const s = need[i];
+      const rows = [];
+      try {
+        const d = JSON.parse(r.getContentText()).chart.result[0];
+        const ts = d.timestamp || [];
+        const close = (d.indicators.quote[0] || {}).close || [];
+        ts.forEach(function (t, j) {
+          if (close[j] != null) rows.push([Utilities.formatDate(new Date(t * 1000), 'America/New_York', 'yyyy-MM-dd'), Math.round(close[j] * 100) / 100]);
+        });
+      } catch (err) { /* 沒有資料的代號回傳空陣列 */ }
+      out[s] = rows;
+      if (rows.length) cache.put('h_' + from + '_' + s, JSON.stringify(rows), 10800);
+    });
+  }
+  return json({ history: out });
+}
+
+// 券商寫法 → Yahoo 寫法，例如 BRK/B → BRK-B
+function toYahooSymbol(s) {
+  return s.replace('/', '-').replace('.', '-');
 }
 
 function json(obj) {

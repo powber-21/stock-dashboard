@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>我的股票倉位</title>
-<meta name="description" content="匯入券商持倉 CSV，以即時報價計算市值、今日損益與未實現損益。持倉只存在你的瀏覽器。">
+<meta name="description" content="美股持倉表現：總市值、總報酬、持倉配置，以及與 S&amp;P 500 的比較。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="我的股票倉位">
+<meta property="og:description" content="美股持倉表現：總市值、總報酬、持倉配置，以及與 S&amp;P 500 的比較。">
 <meta name="theme-color" content="#10213a">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,7 +20,7 @@
     --bg: #eef1f5; --panel: #ffffff; --fg: #0d1726; --muted: #5f6b7d; --line: #dde2ea; --hover: #f3f5f9;
     --band: #10213a; --band-fg: #f2f5fa; --band-muted: #9fb0c8; --band-line: rgba(255,255,255,.12);
     --up: #cf3a3a; --down: #138a52; --up-band: #ff8f86; --down-band: #5fd6a0;
-    --eq: #3f6fd8; --etf: #e48a3a; --cash: #aeb7c5; --axis: #98a1b0; --pct: #6a5acd;
+    --eq: #3f6fd8; --etf: #e48a3a; --cash: #aeb7c5; --axis: #98a1b0; --pct: #6a5acd; --spy: #8b5a2b;
     --s1: #8fb3ff; --s2: #ffc078; --s3: #7ee0b5; --s4: #d4adff; --s5: #ff9fb2; --s0: #5d7090;
     --shadow: 0 1px 2px rgba(13,23,38,.05), 0 4px 16px rgba(13,23,38,.05);
     --num: "Fraunces", Georgia, "Noto Serif TC", serif;
@@ -27,7 +30,7 @@
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #0b1018; --panel: #121924; --fg: #e7ecf3; --muted: #8d99ab; --line: #222c3a; --hover: #1a2230;
-            --band: #0e1a2c; --up: #ff6b6b; --down: #34c37f; --eq: #6f9bff; --etf: #f4a259; --cash: #4b5566; --axis: #6b7482; --pct: #a99cff;
+            --band: #0e1a2c; --up: #ff6b6b; --down: #34c37f; --eq: #6f9bff; --etf: #f4a259; --cash: #4b5566; --axis: #6b7482; --pct: #a99cff; --spy: #c9935f;
             --shadow: 0 1px 2px rgba(0,0,0,.3); color-scheme: dark; }
   }
   * { box-sizing: border-box; }
@@ -121,6 +124,29 @@
   .tip-head { color: var(--muted); margin-bottom: 3px; }
   .tip-line { display: flex; justify-content: space-between; gap: 16px; }
 
+  .value-card { display: flex; flex-direction: column; gap: 14px; }
+  .vc-top { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .vc-top .card-head { margin: 0; }
+  .ranges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .range { font: inherit; font-size: .8rem; font-weight: 500; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+           border: 1px solid var(--line); background: var(--bg); color: var(--muted); transition: background .15s, color .15s, border-color .15s; }
+  .range:hover { color: var(--fg); }
+  .range[aria-pressed="true"] { background: var(--fg); color: var(--panel); border-color: var(--fg); }
+  .range:focus-visible { outline: 2px solid var(--eq); outline-offset: 2px; }
+  .vc-stats { display: flex; flex-wrap: wrap; gap: 8px 32px; }
+  .vc-stats > div { display: flex; flex-direction: column; gap: 2px; }
+  .vc-stats .label { font-size: .75rem; color: var(--muted); }
+  .vc-stats .v { font-family: var(--num); font-size: 1.35rem; font-variant-numeric: tabular-nums lining-nums; }
+  .vc-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: .75rem; color: var(--muted); margin-bottom: -6px; }
+  .vc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .vc-legend .ln { display: inline-block; width: 16px; height: 0; border-top: 2px solid; border-radius: 2px; }
+  .vc-legend .ln.me { border-color: var(--eq); }
+  .vc-legend .ln.spy { border-color: var(--spy); }
+  .vchart { position: relative; min-height: 200px; }
+  .vchart svg { display: block; width: 100%; overflow: visible; }
+  .vchart .tick text { fill: var(--muted); font-size: 11px; font-family: var(--sans); }
+  .vchart .grid-line { stroke: var(--line); stroke-width: 1; }
+  .vchart .vc-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: .85rem; }
   .table-card { container-type: inline-size; display: block; }
   .table-card > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px;
                           margin: -20px; padding: 20px; border-radius: var(--radius); }
@@ -278,6 +304,28 @@
   <div id="dash" hidden>
     <div style="display:flex;flex-direction:column;gap:16px">
       <div class="status" id="status"></div>
+
+      <section class="card value-card" id="value-card">
+        <div class="vc-top">
+          <div class="card-head"><h2>Total Value</h2></div>
+          <div class="ranges" id="ranges">
+            <button type="button" class="range" data-range="1w" aria-pressed="false">1 週</button>
+            <button type="button" class="range" data-range="1m" aria-pressed="false">1 個月</button>
+            <button type="button" class="range" data-range="3m" aria-pressed="false">3 個月</button>
+            <button type="button" class="range" data-range="ytd" aria-pressed="true">年度至今</button>
+            <button type="button" class="range" data-range="1y" aria-pressed="false">1 年</button>
+            <button type="button" class="range" data-range="2y" aria-pressed="false">2 年</button>
+            <button type="button" class="range" data-range="5y" aria-pressed="false">5 年</button>
+          </div>
+        </div>
+        <div class="vc-stats">
+          <div><span class="label">總價值</span><span class="v" id="vc-end">—</span></div>
+          <div><span class="label" id="vc-label">區間變動</span><span class="v" id="vc-change">—</span></div>
+          <div><span class="label">同期 S&amp;P 500</span><span class="v" id="vc-spy">—</span></div>
+        </div>
+        <div class="vc-legend"><span><i class="ln me"></i>我的總價值</span><span><i class="ln spy"></i>S&amp;P 500（SPY，以相同起點換算）</span></div>
+        <div class="vchart" id="vchart"></div>
+      </section>
 
       <section class="grid">
         <div class="card chart-card">
@@ -470,6 +518,7 @@
       if (!d || d.v !== 1 || !Array.isArray(d.p)) return null;
       return {
         label: '', cash: optNum(d.c) || 0, importedAt: d.t, sharedAt: d.t, principal: optNum(d.k),
+        history: Array.isArray(d.h) ? d.h.filter((x) => Array.isArray(x) && /^\d{4}-\d{2}-\d{2}$/.test(x[0]) && Number.isFinite(Number(x[1]))).map((x) => [x[0], Number(x[1]), optNum(x[2])]) : null,
         positions: d.p.map(([symbol, name, qty, cost, t, price, prev]) => ({
           symbol: String(symbol), name: String(name || ''), qty: optNum(qty) || 0, cost: optNum(cost),
           type: t === 'e' ? 'etf' : 'equity', csvPrice: optNum(price), csvPrev: optNum(prev),
@@ -489,6 +538,7 @@
     const round = (v, n) => v == null ? null : Number(v.toFixed(n));
     return {
       v: 1, t: quotes.asOf || new Date().toISOString(), c: round(book.cash, 2), k: PRINCIPAL,
+      h: valueSeries().map((x) => [x.date, Math.round(x.v), x.spy == null ? null : Number(x.spy.toFixed(2))]),
       p: d.list.map((r) => [r.symbol, r.name.slice(0, 40), r.qty, round(r.cost, 2), r.type === 'etf' ? 'e' : 's', round(r.price, 4), round(r.prev, 4)]),
     };
   }
@@ -541,6 +591,196 @@
              principal, total, totalPct: principal ? total / principal : 0 };
   }
 
+  // ---------- value history ----------
+  const HISTORY_FROM = '2026-06-01';
+  const HISTORY_KEY = 'pf.history.v1';
+  const HISTORY_TTL = 3 * 60 * 60 * 1000;
+  let history = viewing ? null : store.get(HISTORY_KEY);   // {syms, from, at, data: {SYM: [[date, close], ...]}}
+  let range = 'ytd';
+  const BENCH = 'SPY';
+  const symsKey = () => book ? [...new Set(book.positions.map((p) => p.symbol.toUpperCase()).concat(BENCH))].sort().join(',') : '';
+
+  async function loadHistory(force) {
+    if (!book || viewing || !apiKey) return;
+    const syms = symsKey();
+    if (!force && history && history.syms === syms && history.from === HISTORY_FROM && Date.now() - history.at < HISTORY_TTL) return;
+    try {
+      const res = await fetch(QUOTE_API + '?key=' + encodeURIComponent(apiKey) + '&from=' + HISTORY_FROM + '&history=' + encodeURIComponent(syms));
+      const out = await res.json();
+      if (!out || !out.history) return;
+      history = { syms, from: HISTORY_FROM, at: Date.now(), data: out.history };
+      store.set(HISTORY_KEY, history);
+      renderValue();
+    } catch {}
+  }
+
+  // Daily total value = sum of (current shares x that day's close) + cash; a symbol counts from its first trading day.
+  function valueSeries() {
+    if (!book) return [];
+    if (viewing) return shared && Array.isArray(shared.history) ? shared.history.map(([date, v, spy]) => ({ date, v, spy: spy == null ? null : Number(spy) })) : [];
+    if (!history || !history.data) return [];
+    const byDate = new Map();
+    book.positions.forEach((p) => {
+      (history.data[p.symbol.toUpperCase()] || []).forEach(([date, close]) => {
+        if (!byDate.has(date)) byDate.set(date, new Map());
+        byDate.get(date).set(p.symbol.toUpperCase(), close);
+      });
+    });
+    const spyByDate = new Map(history.data[BENCH] || []);
+    const dates = [...byDate.keys()].sort();
+    const last = new Map();
+    let lastSpy = null;
+    const out = dates.map((date) => {
+      byDate.get(date).forEach((c, s) => last.set(s, c));
+      if (spyByDate.has(date)) lastSpy = spyByDate.get(date);
+      let v = book.cash;
+      book.positions.forEach((p) => { const c = last.get(p.symbol.toUpperCase()); if (c != null) v += p.qty * c; });
+      return { date, v, spy: lastSpy };
+    });
+    // The newest day uses the live total, so the line ends at the number shown at the top.
+    const d = computed();
+    const tradeDay = latestTradeDay();
+    if (tradeDay && d) {
+      const liveSpy = quotes.quotes[BENCH] && quotes.quotes[BENCH].price != null ? quotes.quotes[BENCH].price : null;
+      if (out.length && out[out.length - 1].date === tradeDay) { out[out.length - 1].v = d.mkt; if (liveSpy != null) out[out.length - 1].spy = liveSpy; }
+      else if (!out.length || out[out.length - 1].date < tradeDay) out.push({ date: tradeDay, v: d.mkt, spy: liveSpy != null ? liveSpy : (out.length ? out[out.length - 1].spy : null) });
+    }
+    return out;
+  }
+  function latestTradeDay() {
+    const times = Object.values(quotes.quotes || {}).map((q) => q && q.time).filter(Boolean).sort();
+    return times.length ? String(times[times.length - 1]).slice(0, 10) : null;
+  }
+
+  const parseDay = (s) => { const [y, m, dd] = s.split('-').map(Number); return new Date(y, m - 1, dd); };
+  const isoDay = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  function rangeStart(series) {
+    if (!series.length) return null;
+    const s = parseDay(series[series.length - 1].date);
+    if (range === '1w') s.setDate(s.getDate() - 7);
+    if (range === '1m') s.setMonth(s.getMonth() - 1);
+    if (range === '3m') s.setMonth(s.getMonth() - 3);
+    if (range === 'ytd') { s.setMonth(0); s.setDate(1); }
+    if (range === '1y') s.setFullYear(s.getFullYear() - 1);
+    if (range === '2y') s.setFullYear(s.getFullYear() - 2);
+    if (range === '5y') s.setFullYear(s.getFullYear() - 5);
+    const iso = isoDay(s);
+    return iso < series[0].date ? series[0].date : iso;   // older than the data: start from the first day we have
+  }
+  function niceStep(raw) {
+    const p = Math.pow(10, Math.floor(Math.log10(raw)));
+    const f = raw / p;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p;
+  }
+  const kLabel = (v) => '$' + (v >= 1000 ? String(Number((v / 1000).toFixed(1))) + 'K' : nf0.format(v));
+
+  function renderValue() {
+    const box = $('vchart');
+    box.replaceChildren();
+    const all = valueSeries();
+    const startIso = rangeStart(all);
+    // start from the last close before the window, so the change matches the period
+    let i0 = startIso ? all.findIndex((p) => p.date >= startIso) : -1;
+    if (i0 > 0 && range !== 'ytd') i0 -= 1;
+    const pts = i0 >= 0 ? all.slice(i0) : [];
+    const labels = { '1w': '近 1 週變動', '1m': '近 1 個月變動', '3m': '近 3 個月變動', ytd: '年度至今變動', '1y': '近 1 年變動', '2y': '近 2 年變動', '5y': '近 5 年變動' };
+    const clamped = pts.length && range !== 'ytd' && startIso === all[0].date && i0 === 0;
+    $('vc-label').textContent = clamped ? labels[range] + '（' + Number(all[0].date.slice(5, 7)) + '/' + Number(all[0].date.slice(8)) + ' 起）' : labels[range];
+    if (pts.length < 2) {
+      setText($('vc-end'), '—'); setText($('vc-change'), '—'); setText($('vc-spy'), '—');
+      const e = document.createElement('div'); e.className = 'vc-empty';
+      e.textContent = viewing ? '這個分享沒有包含走勢資料' : (apiKey ? '正在載入走勢…' : '輸入授權碼後顯示走勢');
+      box.append(e);
+      return;
+    }
+    const first = pts[0].v, lastV = pts[pts.length - 1].v, chg = lastV - first;
+    setText($('vc-end'), usd(lastV));
+    setText($('vc-change'), susd(chg) + '（' + spct(first ? chg / first : 0) + '）', tone(chg));
+    const spy0 = pts[0].spy;
+    const bench = pts.map((p) => (spy0 && p.spy != null ? first * p.spy / spy0 : null));
+    const benchLast = bench[bench.length - 1];
+    if (benchLast != null) setText($('vc-spy'), spct(benchLast / first - 1), tone(benchLast - first));
+    else setText($('vc-spy'), '—');
+
+    const W = Math.max(280, box.clientWidth), H = W < 520 ? 200 : 260;
+    const m = { t: 10, r: 58, b: 26, l: 4 };
+    const xs = pts.map((p) => parseDay(p.date).getTime());
+    const allV = pts.map((p) => p.v).concat(bench.filter((v) => v != null));
+    const lo = Math.min(...allV), hi = Math.max(...allV);
+    const pad = (hi - lo) * 0.12 || hi * 0.02 || 1;
+    const y0 = lo - pad, y1 = hi + pad;
+    const X = (t) => m.l + (t - xs[0]) / ((xs[xs.length - 1] - xs[0]) || 1) * (W - m.l - m.r);
+    const Y = (v) => m.t + (1 - (v - y0) / (y1 - y0)) * (H - m.t - m.b);
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    const el = (tag, attrs, parent) => { const n = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([k, v]) => n.setAttribute(k, v)); (parent || svg).append(n); return n; };
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('height', H);
+    svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', '總價值走勢圖');
+
+    // y gridlines with labels on the right
+    const yt = el('g', { class: 'tick' });
+    const step = niceStep((y1 - y0) / 4);
+    for (let v = Math.ceil(y0 / step) * step; v <= y1; v += step) {
+      el('line', { class: 'grid-line', x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) });
+      el('text', { x: W - m.r + 8, y: Y(v) + 4 }, yt).textContent = kLabel(v);
+    }
+    // x labels: month starts for long ranges, a few dates for short ones
+    const xt = el('g', { class: 'tick' });
+    const days = (xs[xs.length - 1] - xs[0]) / 864e5;
+    const marks = [];
+    if (days > 45) {
+      const d = parseDay(pts[0].date); d.setDate(1); d.setMonth(d.getMonth() + 1);
+      while (d.getTime() <= xs[xs.length - 1]) { marks.push(new Date(d)); d.setMonth(d.getMonth() + 1); }
+    } else {
+      const n = Math.min(pts.length, W < 520 ? 4 : 6);
+      for (let k = 0; k < n; k++) marks.push(parseDay(pts[Math.round(k * (pts.length - 1) / Math.max(1, n - 1))].date));
+    }
+    let lastX = -Infinity;
+    marks.forEach((d) => {
+      const x = X(d.getTime());
+      if (x - lastX < 46 || x > W - m.r - 12) return;
+      lastX = x;
+      el('text', { x, y: H - 6, 'text-anchor': 'middle' }, xt).textContent = days > 45 ? (d.getMonth() + 1) + '月' : (d.getMonth() + 1) + '/' + d.getDate();
+    });
+
+    // area + line
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--eq').trim() || '#3f6fd8';
+    const grad = el('linearGradient', { id: 'vc-fill', x1: 0, x2: 0, y1: 0, y2: 1 }, el('defs', {}));
+    [[0, .22], [.6, .07], [1, 0]].forEach(([o, a]) => el('stop', { offset: o, 'stop-color': color, 'stop-opacity': a }, grad));
+    const line = pts.map((p, k) => (k ? 'L' : 'M') + X(xs[k]).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join('');
+    el('path', { d: line + 'L' + X(xs[xs.length - 1]).toFixed(1) + ' ' + (H - m.b) + 'L' + X(xs[0]).toFixed(1) + ' ' + (H - m.b) + 'Z', fill: 'url(#vc-fill)' });
+    const spyColor = getComputedStyle(document.documentElement).getPropertyValue('--spy').trim() || '#8b5a2b';
+    let spyPath = '', pen = false;
+    bench.forEach((v, k) => { if (v == null) { pen = false; return; } spyPath += (pen ? 'L' : 'M') + X(xs[k]).toFixed(1) + ' ' + Y(v).toFixed(1); pen = true; });
+    if (spyPath) el('path', { d: spyPath, fill: 'none', stroke: spyColor, 'stroke-width': 1.75, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', opacity: .9 });
+    el('path', { d: line, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+    el('line', { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, stroke: 'var(--axis)', 'stroke-width': 1 });
+    el('circle', { cx: X(xs[xs.length - 1]), cy: Y(lastV), r: 3.5, fill: color });
+
+    // hover / tap
+    const rule = el('line', { y1: m.t, y2: H - m.b, stroke: 'var(--axis)', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+    const dot = el('circle', { r: 4.5, fill: color, stroke: 'var(--panel)', 'stroke-width': 2, visibility: 'hidden' });
+    const hit = el('rect', { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: 'transparent' });
+    box.append(svg);
+    const tip = tipFor(box);
+    const move = (e) => {
+      const r = svg.getBoundingClientRect();
+      const px = (e.clientX - r.left) * (W / r.width);
+      let k = 0, best = Infinity;
+      xs.forEach((x, j) => { const dd = Math.abs(X(x) - px); if (dd < best) { best = dd; k = j; } });
+      const p = pts[k];
+      rule.setAttribute('x1', X(xs[k])); rule.setAttribute('x2', X(xs[k])); rule.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', X(xs[k])); dot.setAttribute('cy', Y(p.v)); dot.setAttribute('visibility', 'visible');
+      const dd = parseDay(p.date);
+      const lines = [['總價值', usd(p.v)], ['較區間起點', spct(p.v / first - 1), tone(p.v - first)]];
+      if (bench[k] != null) lines.push(['S&P 500', spct(bench[k] / first - 1), tone(bench[k] - first)]);
+      tip.show(e, dd.getFullYear() + '/' + (dd.getMonth() + 1) + '/' + dd.getDate(), lines);
+    };
+    hit.addEventListener('pointermove', move);
+    hit.addEventListener('pointerdown', move);
+    hit.addEventListener('pointerleave', () => { tip.hide(); rule.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); });
+  }
+
   // ---------- quotes ----------
   let inFlight = false;
   async function loadQuotes() {
@@ -548,7 +788,7 @@
     if (!apiKey) { quoteState = 'nokey'; render(); return; }
     inFlight = true;
     quoteState = 'loading'; renderStatus();
-    const syms = [...new Set(book.positions.map((p) => p.symbol.toUpperCase()))];
+    const syms = [...new Set(book.positions.map((p) => p.symbol.toUpperCase()).concat(BENCH))];
     const url = QUOTE_API + '?key=' + encodeURIComponent(apiKey) + '&symbols=' + encodeURIComponent(syms.join(','));
     try {
       let data = null;
@@ -571,6 +811,7 @@
       quotes = { asOf: data.asOf || new Date().toISOString(), quotes: { ...quotes.quotes, ...got } };
       store.set(QUOTE_KEY, quotes);
       quoteState = 'ok';
+      loadHistory();
     } catch (e) {
       quoteState = 'error';
     } finally {
@@ -774,6 +1015,7 @@
     setText($('t-total'), susd(d.total), tone(d.total));
     setText($('t-totalpct'), spct(d.totalPct), tone(d.totalPct));
     setText($('t-principal'), usd(d.principal));
+    renderValue();
     renderAlloc(d);
     renderDiverge('c-gain', d, 'gain', susd, (r) => [
       ['未實現損益', susd(r.gain), tone(r.gain)], ['報酬率', spct(r.gainPct), tone(r.gainPct)],
@@ -799,6 +1041,7 @@
       book = importBrokerCSV(await f.text());
       if (!store.set(STORE_KEY, book)) showMsg('已匯入，但這個瀏覽器不允許儲存資料，重新整理後需要再匯入一次。');
       else showMsg('已匯入 ' + book.positions.length + ' 檔持股。');
+      history = null; store.del(HISTORY_KEY);
       render();
       loadQuotes();
     } catch (err) {
@@ -849,6 +1092,13 @@
       $('share-url').select();
     }
   });
+  document.querySelectorAll('.range').forEach((b) => b.addEventListener('click', () => {
+    range = b.dataset.range;
+    document.querySelectorAll('.range').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    renderValue();
+  }));
+  let resizeT;
+  window.addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => { if (book) renderValue(); }, 150); });
   $('share-copy').addEventListener('click', async () => {
     const input = $('share-url');
     try { await navigator.clipboard.writeText(input.value); $('share-copy').textContent = '已複製'; }
