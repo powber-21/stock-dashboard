@@ -244,8 +244,8 @@
       </div>
       <div class="stats">
         <div class="stat"><span class="label">今日損益</span><span class="value" id="t-day">—</span><span class="note"><b id="t-daypct" class="pill">—</b></span></div>
-        <div class="stat"><span class="label">未實現損益</span><span class="value" id="t-gain">—</span><span class="note"><b id="t-gainpct" class="pill">—</b></span></div>
-        <div class="stat"><span class="label">投入成本</span><span class="value" id="t-cost">—</span><span class="note">股票與 ETF</span></div>
+        <div class="stat"><span class="label">總報酬</span><span class="value" id="t-total">—</span><span class="note"><b id="t-totalpct" class="pill">—</b></span></div>
+        <div class="stat"><span class="label">本金</span><span class="value" id="t-principal">—</span><span class="note">實際投入</span></div>
       </div>
     </section>
 
@@ -266,7 +266,7 @@
     <label for="share-url">分享連結</label>
     <input id="share-url" type="text" readonly>
     <button type="button" class="btn primary" id="share-copy">複製</button>
-    <span class="muted small">連結裡包含你的持股、股數、成本和目前價格。朋友打開看到的是現在這一刻的快照，不會跟著更新；要給最新的就再分享一次。資料寫在連結本身，不會上傳到任何伺服器。</span>
+    <span class="muted small">連結裡包含你的持股、股數、成本、本金和目前價格。朋友打開看到的是現在這一刻的快照，不會跟著更新；要給最新的就再分享一次。資料寫在連結本身，不會上傳到任何伺服器。</span>
   </div>
 
   <section class="card empty" id="empty">
@@ -327,7 +327,7 @@
   </div>
 
   <footer>
-    紅色代表上漲／獲利，綠色代表下跌／虧損。持倉資料只存在你的瀏覽器，不會上傳到任何伺服器；查詢股價時只送出股票代號和授權碼。
+    紅色代表上漲／獲利，綠色代表下跌／虧損。
     報價來源 Google Finance，可能延遲，僅供參考，不構成投資建議。
     <div class="foot-actions">
       <span id="imported"></span>
@@ -369,6 +369,8 @@
   const QUOTE_KEY = 'pf.quotes.v1';
   const APIKEY_KEY = 'pf.apikey.v1';
   const REFRESH_MS = 5 * 60 * 1000;
+  // 實際投入本金（含以前清倉實現的獲利再投入前的本金）。總報酬 = 總市值 − 本金。
+  const PRINCIPAL = 124348;
 
   const $ = (id) => document.getElementById(id);
   const store = {
@@ -475,7 +477,7 @@
       const d = JSON.parse(b64d(m[1]));
       if (d.v !== 1 || !Array.isArray(d.p)) return null;
       return {
-        label: '', cash: optNum(d.c) || 0, importedAt: d.t, sharedAt: d.t,
+        label: '', cash: optNum(d.c) || 0, importedAt: d.t, sharedAt: d.t, principal: optNum(d.k),
         positions: d.p.map(([symbol, name, qty, cost, t, price, prev]) => ({
           symbol: String(symbol), name: String(name || ''), qty: optNum(qty) || 0, cost: optNum(cost),
           type: t === 'e' ? 'etf' : 'equity', csvPrice: optNum(price), csvPrev: optNum(prev),
@@ -489,7 +491,7 @@
     const d = computed();
     const round = (v, n) => v == null ? null : Number(v.toFixed(n));
     const payload = {
-      v: 1, t: quotes.asOf || new Date().toISOString(), c: round(book.cash, 2),
+      v: 1, t: quotes.asOf || new Date().toISOString(), c: round(book.cash, 2), k: PRINCIPAL,
       p: d.list.map((r) => [r.symbol, r.name.slice(0, 40), r.qty, round(r.cost, 2), r.type === 'etf' ? 'e' : 's', round(r.price, 4), round(r.prev, 4)]),
     };
     return location.origin + location.pathname + '#s=' + b64e(JSON.stringify(payload));
@@ -524,7 +526,10 @@
     const day = list.reduce((s, r) => s + r.day, 0);
     const cost = list.reduce((s, r) => s + (r.cost || 0), 0);
     const gain = list.reduce((s, r) => s + (r.gain || 0), 0);
-    return { list, mkt, day, dayPct: mkt - day ? day / (mkt - day) : 0, cost, gain, gainPct: cost ? gain / cost : 0, cash: book.cash };
+    const principal = shared && shared.principal != null ? shared.principal : PRINCIPAL;
+    const total = mkt - principal;
+    return { list, mkt, day, dayPct: mkt - day ? day / (mkt - day) : 0, cost, gain, gainPct: cost ? gain / cost : 0, cash: book.cash,
+             principal, total, totalPct: principal ? total / principal : 0 };
   }
 
   // ---------- quotes ----------
@@ -758,9 +763,9 @@
     setText($('t-cash'), d.list.length + ' 檔持股');
     setText($('t-day'), susd(d.day), tone(d.day));
     setText($('t-daypct'), spct(d.dayPct), tone(d.dayPct));
-    setText($('t-gain'), susd(d.gain), tone(d.gain));
-    setText($('t-gainpct'), spct(d.gainPct), tone(d.gainPct));
-    setText($('t-cost'), usd(d.cost));
+    setText($('t-total'), susd(d.total), tone(d.total));
+    setText($('t-totalpct'), spct(d.totalPct), tone(d.totalPct));
+    setText($('t-principal'), usd(d.principal));
     renderAlloc(d);
     renderDiverge('c-gain', d, 'gain', susd, (r) => [
       ['未實現損益', susd(r.gain), tone(r.gain)], ['報酬率', spct(r.gainPct), tone(r.gainPct)],
@@ -810,10 +815,22 @@
     });
   });
 
-  $('share-btn').addEventListener('click', () => {
-    const box = $('sharebox');
-    box.hidden = !box.hidden;
-    if (!box.hidden) { $('share-url').value = shareLink(); $('share-url').select(); }
+  // Copy the share link straight to the clipboard; the button label confirms it.
+  // Only if the browser refuses clipboard access does the link box appear, so it can be copied by hand.
+  $('share-btn').addEventListener('click', async () => {
+    const btn = $('share-btn');
+    const link = shareLink();
+    try {
+      await navigator.clipboard.writeText(link);
+      $('sharebox').hidden = true;
+      btn.textContent = '已複製連結';
+      clearTimeout(btn._t);
+      btn._t = setTimeout(() => { btn.textContent = '分享'; }, 1800);
+    } catch {
+      $('share-url').value = link;
+      $('sharebox').hidden = false;
+      $('share-url').select();
+    }
   });
   $('share-copy').addEventListener('click', async () => {
     const input = $('share-url');
